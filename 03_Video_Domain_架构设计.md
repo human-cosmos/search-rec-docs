@@ -123,21 +123,30 @@ Video、Shot、Segment 共享资产身份和来源链路，但不能把三种粒
 
 这些是视频 Domain Pack 的领域能力；底层仍通过 URRE 的 Search、Recommendation、Similarity、Explore 完成候选发现和排序。
 
-## 5. 视频 Agent 角色
+Recommendation Strategy 负责选择推荐场景、目标、约束和策略版本，URRE Recommendation Service 负责实际召回、排序和重排。Strategy 不直接遍历候选，也不默认启动自治 Agent。
 
-| 职责角色 | 职责 | 主要产物 |
-|---|---|---|
-| Video Director | 主协调、目标理解、任务路由 | Task Brief、Plan |
-| Creative Planning Agent | 创作方向、叙事与分镜 | Creative Brief、Storyboard |
-| Search Agent | 将镜头目标转成检索请求 | Search Request、Candidate Set |
-| Recommendation Agent | 结合任务和项目状态主动推荐 | Recommendation Set |
-| Material Curation Agent | 候选比较、素材组合与分配 | Material Assignment |
-| Editing Agent | 剪辑意图与时间线组织 | Edit Decision、Timeline IR |
-| Quality Review Agent | 独立审核和修订建议 | Quality Report |
+## 5. 视频领域角色与默认实现形态
 
-表中名称首先表示职责边界，不表示每个流程都要启动一个常驻自治 Agent。按 [Agent Runtime](02_Agent_Runtime与任务治理_架构设计2.0.md) 的原则，默认由一个 Video Director 负责主协调；Creative Planning、Search、Recommendation 和 Material Curation 优先实现为 Planner、Workflow Node、Tool 或 Service，只有满足独立上下文、独立目标、独立权限或独立评审条件时才升级为专业 Agent。Quality Review 应保持必要的执行与审核隔离。
+| 能力 / 角色 | 默认实现形态 | 职责 | 主要产物或下游 |
+|---|---|---|---|
+| Video Director Agent | Agent | 视频域主协调、目标理解、计划、领域能力调度和用户确认 | Task Brief、Plan |
+| Creation Agent / Creation Workflow | Workflow 为主；Creation Agent 在创作方向和叙事取舍处启用 | 形成创作方向、叙事、分镜和素材组合决策 | Creative Brief、Storyboard、Material Assignment |
+| Search Planner | 轻量 Planner / Workflow Node | 仅在复杂 Query 中澄清目标、拆分子查询并生成受约束的 SearchPlan | SearchPlan |
+| Search Service | URRE Service | 执行 Search、Similar、Explore，完成召回、过滤、排序和证据组装 | Candidate Set、Exploration Set |
+| Recommendation Strategy | Domain Strategy | 确定推荐场景、目标、约束、策略 ID 和评估口径 | RecommendationStrategy |
+| Recommendation Service | URRE Service | 执行上下文推荐、多路召回、排序和重排 | Recommendation Set |
+| Material Curation | Creation Workflow 的有界阶段；高复杂度时启用专业 Agent | 比较候选、处理替代关系和完成素材分配 | Material Assignment |
+| Editing Workflow / Editing Agent | Workflow 为主；Editing Agent 处理剪辑意图和复杂冲突 | 组织剪辑意图、Edit Decision 和 Timeline IR | Edit Decision、Timeline IR |
+| Quality Review Agent | 独立审核 Agent + Workflow Gate | 依据原始要求、Artifact 和证据独立审核，定位问题并提出有限修订 | Quality Report |
 
-简单素材搜索不需要启动全部角色；完整混剪任务才走完整链路。
+这些名称表示职责边界，不表示每个能力都要启动常驻自治 Agent。完整判定见 [Agent / Tool / Service / Workflow 职责矩阵](00_架构设计总纲.md)。
+
+- 简单素材搜索直接调用 Search API，不经过 Search Planner 或 Video Director。
+- 复杂搜索由 Search Planner 生成并校验 SearchPlan，再由 URRE Search Service 执行。
+- 项目推荐由 Recommendation Strategy 选择目标和约束，再由 URRE Recommendation Service 执行。
+- Creation Agent 负责真正的创作规划和取舍，不应代替 Search Service 遍历候选，也不直接执行媒体操作。
+- Editing Workflow 负责剪辑阶段编排；时间线校验、编译和媒体渲染由确定性 Service 完成。
+- Quality Review Agent 保持执行与审核隔离，不能由执行阶段自行宣告通过。
 
 ## 6. 创作中间表示（Creative IR）
 
@@ -221,8 +230,9 @@ flowchart TB
   CP --> CB[Creative Brief]
   CB --> SB[Storyboard]
   SB --> MR[Material Requirements]
-  MR --> RR[URRE Search / Recommendation]
-  RR --> CS[Candidate Set + Evidence]
+  MR --> RR[Search Planner / Recommendation Strategy]
+  RR --> RS[URRE Search / Recommendation Service]
+  RS --> CS[Candidate Set + Evidence]
   CS --> MC[Material Curation]
   MC --> MA[Material Assignment]
   MA --> USER{用户确认关键素材?}
@@ -387,3 +397,4 @@ flowchart LR
 9. 项目可暂停、恢复、回滚和继续编辑。
 10. 最终采用与实际使用反馈能回流 URRE 与 Agent 评估。
 11. 工作台能连续呈现对话、任务、素材、创作和预览，并在高影响节点请求确认。
+12. Search Planner、Recommendation Strategy、Creation 和 Editing 的实现形态符合统一职责矩阵，不存在默认重复启动的自治 Agent。

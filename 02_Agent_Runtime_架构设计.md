@@ -55,7 +55,16 @@ flowchart TB
 
 Router 可依据任务类型、复杂度、风险等级、延迟预算和用户授权决定路径。不能仅以“用户输入很长”判断复杂度。
 
-## 4. Plan / Task / Checkpoint / Artifact
+### 3.1 Platform Agent 与领域 Agent
+
+- **Platform Agent** 是跨领域任务的默认主协调能力，负责目标确认、领域识别、任务路由、工具边界和跨领域 Artifact 交接。
+- **Video Director Agent** 是视频领域内的主协调 Agent，负责创作目标、视频计划、领域能力调度和用户确认，不重复承担平台级身份、租户和通用任务治理。
+- 单一视频请求可以直接进入 Video Director 或业务 API；只有跨领域、需要长期协调或存在复杂决策时才由 Platform Agent 激活领域 Agent。
+- Search Planner 默认是复杂查询中的受约束 Planner，Recommendation Strategy 默认是领域策略，二者都不因为拥有名称中的业务语义就成为自治 Agent。
+
+统一实现形态以 [总纲职责矩阵](00_架构设计总纲.md) 为准。
+
+## 4. Session / Plan / Task / Checkpoint / Artifact
 
 ### 4.1 Plan
 
@@ -118,6 +127,26 @@ Artifact 是可引用、可复用、可版本化的阶段成果，例如：
 
 每个 Artifact 应包含类型、Schema 版本、内容引用、父产物、来源任务、创建者、生成工具/模型版本、校验状态和权限范围。
 
+### 4.5 Session
+
+Session 表示一次连续交互及其 Agent 运行上下文，负责对话连续性、用户当前输入、已激活 Agent、短期上下文引用和等待状态。Session 不是项目、任务或业务产物的权威事实源。
+
+Session 至少应记录：
+- `session_id`、`tenant_id`、`user_id`、`domain_id`。
+- 当前 Agent、活跃 Task、最近 Artifact 引用和待处理用户输入。
+- 权限快照或授权引用、上下文版本和创建/最近活动时间。
+- 空闲、归档或过期策略，以及恢复时允许读取的 Memory 范围。
+
+| 对象 | 回答的问题 | 权威边界 |
+|---|---|---|
+| Session | 这次连续交互进行到哪里，下一步等待什么？ | 交互连续性；可过期、可重建 |
+| Project | 长期业务对象当前是什么状态？ | 项目级长期事实源 |
+| Task | 这次任务执行处于什么状态？ | 任务生命周期与恢复入口 |
+| Checkpoint | 中断后从哪里继续？ | 最小充分恢复状态 |
+| Artifact | 每个阶段交付了什么？ | 可引用、可版本化的业务成果 |
+
+Session 可以引用 Task、Project、Checkpoint 和 Artifact，但不能用聊天历史替代这些对象。Session 过期不等于 Task 失败或 Project 丢失；恢复 Session 时应从 Task/Project/Artifact 重新装载权威状态，并只恢复授权范围内的 Memory。
+
 ## 5. 固定工作流与动态规划
 
 ### 5.1 固定工作流
@@ -173,6 +202,60 @@ flowchart LR
 ```
 
 审核 Agent 应拿到验收标准、输入产物和必要证据，不应只看到执行 Agent 自己写的“完成说明”。
+
+### 6.3 通用端到端执行流程
+
+下图描述跨领域请求从入口路由到任务交付和反馈回流的完整控制流。简单请求走快速路径，只有复杂或跨领域请求才由 Platform Agent 接管；检索推荐默认由 URRE Service 执行，质量审核是否启用独立 Agent 由 Domain Pack 和任务风险决定。
+
+```mermaid
+flowchart TB
+  U[用户自然语言请求] --> ROUTER[Intent Router]
+
+  ROUTER -->|简单检索 / 推荐| FAST[URRE API / Domain Service]
+  ROUTER -->|复杂 / 跨领域任务| PA[Platform Agent]
+
+  PA --> DOMAIN{识别业务领域}
+  DOMAIN --> VD[Video Director]
+  DOMAIN --> PD[Product Domain Agent]
+  DOMAIN --> MD[Marketing Domain Agent]
+
+  VD --> PLAN[受约束任务计划]
+  PD --> PLAN
+  MD --> PLAN
+
+  PLAN --> EXEC[Agent Tools / Domain Workflow]
+  EXEC --> URRE[URRE Search / Recommendation Service]
+  EXEC --> DSERV[领域业务 / 确定性执行服务]
+
+  URRE --> CAND[Candidate Set + Evidence]
+  DSERV --> ART[结构化 Artifact]
+  CAND --> ART
+
+  ART --> QA[质量门禁 / 独立审核按需启用]
+  QA -->|通过| SUMMARY[结果汇总与解释]
+  QA -->|不通过| FIX[定位问题 / 受控修订]
+
+  FIX --> LIMIT{预算与重试策略允许?}
+  LIMIT -->|是| PLAN
+  LIMIT -->|否| HUMAN[请求人工确认或说明未达标]
+
+  FAST --> CONFIRM[用户确认]
+  SUMMARY --> CONFIRM
+  HUMAN --> CONFIRM
+
+  CONFIRM --> FEEDBACK[采用与业务结果反馈]
+  FEEDBACK --> URRE
+  FEEDBACK --> PROFILE[画像更新 / 评估与任务复盘]
+```
+
+流程约束：
+
+- 普通 Search、Similar 和 Recommendation 不启动 Platform Agent 或领域 Agent。
+- 单一领域复杂任务可以直接进入领域 Agent；只有跨领域、长期协调或复杂决策才由 Platform Agent 路由。
+- Retrieval 和 Recommendation 默认是 Tool + URRE Service，不因流程图中的“任务环节”而变成自治 Agent。
+- 质量门禁必须依据原始要求、Artifact 和证据审核；仅在需要专业判断或责任隔离时启用独立审核 Agent。
+- 修订必须回到受约束计划或明确的问题阶段，并受预算、重试次数和停机条件限制。“最多两次”是可以由 Domain Pack 配置的策略模板，不是平台全局常量。
+- 用户确认和实际采用事件必须回流 URRE、评估与任务复盘，不能只记录为聊天反馈。
 
 ## 7. 工具系统：注册适配层 + 策略治理层
 
@@ -278,17 +361,23 @@ Budget Manager 为任务预留和记录：
 
 ## 12. 与 AgentScope Java 2.0 的映射原则
 
+> **实施原则：** AgentScope 提供运行框架，平台只实现业务治理，不在第一阶段复制框架能力。
+
 当前技术方向采用 AgentScope Java 2.0 + Spring Boot，但要区分框架提供的 Agent/消息/工具能力与平台必须自建的业务治理能力。
 
-| 平台能力 | 框架映射方向 | 平台侧仍需负责 |
-|---|---|---|
-| Agent 执行 | ReActAgent 等 Agent 能力 | 生命周期、任务归属、租户隔离 |
-| 工具调用 | Toolkit / Tool | 注册、权限、审批、审计、配额 |
-| 多 Agent | SubAgent / 协作机制 | 角色策略、Artifact 契约、调度边界 |
-| 上下文 | Memory / Workspace | 会话/任务/项目/用户偏好分层 |
-| 状态 | StateStore 等机制 | Task/Checkpoint 业务状态机与恢复 |
-| 中间件 | Middleware | 统一策略、观测和业务拦截 |
-| 事件 | Event System | 事件规范、持久化、重放与审计 |
+| AgentScope 能力 | 原始用途 | 平台侧对应 | 平台仍需负责的治理职责 |
+|---|---|---|---|
+| ReActAgent | 单 Agent 推理和工具调用 | Agent 执行与 Runtime 调度 | 生命周期、任务归属、租户隔离 |
+| Harness | 为复杂任务提供执行环境和工程能力 | Agent Runtime 作为任务执行控制面 | 意图路由、计划与工作流编排、预算、质量门禁和恢复治理 |
+| Middleware | 推理、工具执行、权限和上下文拦截 | 统一策略、观测和业务拦截中间件 | 身份与租户隔离、数据范围、上下文装载、审计和异常处理 |
+| Toolkit | 封装检索、推荐及领域业务工具 | 工具注册适配层和领域 Tool | 注册、协议适配、权限、审批、审计、配额和降级 |
+| Workspace | Agent 工作空间、配置和资源 | Agent 运行空间，以及项目、任务和资源的隔离引用 | 工作目录与资源生命周期、租户和项目权限、持久化、清理及版本约束 |
+| Memory | 会话记忆和长期记忆 | 分层记忆能力 | 会话、任务、项目和用户偏好分层，以及过期、恢复和 Memory 隔离 |
+| SubAgent | 将复杂任务委派给专业 Agent | 主 Agent 与按需子 Agent 协作 | 角色策略、Artifact 契约、并发与调度边界、预算控制 |
+| Permission | 工具调用授权和人工审批 | 工具调用授权与人工审批能力 | 身份鉴权、资源级权限、参数范围、副作用分级、审批记录和审计 |
+| Event System | 前端实时展示推理和执行进度 | 任务事件流与工作台实时进度展示 | 事件规范和持久化、重放与审计；前端只展示阶段、Tool 摘要和 Artifact 等可审计进度，不暴露内部推理链 |
+| StateStore | 会话状态持久化和恢复 | Session 短期状态持久化适配 | Session 生命周期，以及 Task/Checkpoint 业务状态机、恢复和一致性 |
+| Session | 会话机制 | 交互连续性与 Agent 运行上下文 | Session 过期、恢复、业务对象引用和 Memory 隔离 |
 
 具体 API、模块名和版本需在研发启动时核对官方文档和实际依赖，不以架构文档中的概念映射代替技术验证。
 

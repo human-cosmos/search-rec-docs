@@ -50,7 +50,7 @@ flowchart TB
   EXP --> PIPE
   PIPE <--> DOMAIN[Domain Strategy Registry]
   PIPE <--> FEATURE[Feature Service]
-  PIPE <--> MODEL[Embedding / Ranker / Reranker]
+  PIPE <--> MODEL[Embedding / Two-Tower / DNN Ranker / Reranker]
   PIPE <--> INDEX[关键词 / 向量 / 视觉 / 属性 / 关系索引]
   INGEST[对象接入与内容理解] --> DATA[对象主数据与特征]
   DATA --> INDEX
@@ -148,6 +148,23 @@ flowchart LR
 主排序计算当前请求目标与候选的匹配程度。重排负责多样性、新鲜度、重复抑制、探索比例和业务策略。
 
 Search 与 Recommendation 必须有独立目标函数与评估集。即使底层共享模型服务，也不代表共享同一套训练标签和损失函数。
+
+### 5.4 Embedding / Two-Tower / DNN / Reranker 模型职责
+
+| 模型能力 | 主要阶段 | 输入 | 输出与边界 |
+|---|---|---|---|
+| Embedding Service | 语义索引、召回、相似发现 | Query、视频/镜头/片段文本、图像、多模态特征 | 向量表示；不直接决定最终业务排序 |
+| Two-Tower | 大规模候选召回 | 用户/上下文塔、对象塔及其特征 | 用户与对象的低维匹配表示；用于高效候选发现，不代替重排 |
+| DNN Ranker | 主排序或精排 | Query/Context、候选特征、交叉特征和业务约束特征 | 相关性或任务适配分数；不改变权限与 Rights 硬过滤结果 |
+| Reranker | 小候选集重排 | 排序后的候选、证据、多样性与业务目标 | 最终重排结果；不负责全量召回 |
+
+模型层必须遵守以下边界：
+
+- Search 与 Recommendation 可以共享 Embedding、训练和推理基础设施，但保留独立目标、标签、模型版本和评估集。
+- Two-Tower 的召回分数不能未经校准直接作为 DNN 或 Reranker 的最终业务分数。
+- DNN 输出必须可追溯到特征版本、模型版本和策略版本；任何模型分数都不能绕过租户、权限和 Rights 硬约束。
+- 将现有分数直接相加前必须完成校准；模型缺失、超时或降级时应回退到规则或轻量排序基线。
+- MVP 可以先使用关键词、向量召回和轻量排序；Two-Tower、DNN 和 Reranker 按数据规模、延迟与收益逐步启用。
 
 ---
 
@@ -308,3 +325,4 @@ Agent 可以发起受控的“新增素材入库”业务任务，但实际接�
 6. 简单请求不需要启动 Agent。
 7. 索引摄入链路与 Agent 对话链路解耦。
 8. 新增领域主要通过 Domain Pack 扩展，不复制 URRE 核心流水线。
+9. Embedding、Two-Tower、DNN Ranker 和 Reranker 具有独立版本、接口边界、降级策略和可归因指标。

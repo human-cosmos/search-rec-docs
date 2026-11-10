@@ -15,6 +15,52 @@
 6. 对外事件返回阶段状态和简短决策摘要，不暴露内部推理链、敏感 Prompt 或凭据。
 7. 契约变更必须兼容版本管理；破坏性变更使用新版本，不静默改变字段语义。
 
+### 1.1 Domain Pack SPI 契约
+
+每个领域通过一个 `DomainProvider` 向平台注册能力。它是平台内部 SPI，不是面向终端用户的业务 API，也不是 AgentScope 的扩展点。`domainId` 在运行实例内必须唯一。
+
+```java
+public interface DomainProvider {
+
+    String getDomainId();
+
+    DomainPackDescriptor getDescriptor();
+
+    DomainSchema getSchema();
+
+    List<QueryParser> getQueryParsers();
+
+    List<RecallStrategy> getRecallStrategies();
+
+    RankingStrategy getRankingStrategy();
+
+    List<RerankPolicy> getRerankPolicies();
+
+    List<AgentToolDescriptor> getTools();
+
+    List<AgentSkillDescriptor> getSkills();
+
+    EvaluationStrategy getEvaluationStrategy();
+}
+
+public record DomainPackDescriptor(
+    String version,
+    List<String> dependencies,
+    List<String> compatiblePlatformVersions
+) {}
+```
+
+接口约束：
+
+- `getSchema()` 返回的 Schema 必须通过注册时的兼容性与版本校验。
+- 召回、排序、重排和评估只能返回已注册、已审核的策略或模型 ID；不得接受请求方动态传入的代码、表达式或查询 DSL。
+- `getTools()` 与 `getSkills()` 只声明语义能力及其输入输出契约，实际执行仍经过 Tool Registry 和 Policy Gateway。
+- `getDescriptor()` 必须声明领域包版本、依赖和平台兼容范围，以支持升级、回滚与依赖检查。
+- 同一个 `domainId` 只能存在一个有效 Provider；重复注册、版本冲突或兼容性校验失败时必须拒绝启动该领域包，不影响其他领域。
+- Provider 返回的定义应为不可变描述；运行时不得通过修改 Provider 返回值静默改变已审核的策略或 Schema。
+
+`DomainProvider` 的具体 Java 类型、SPI 加载方式和包名在研发启动时以正式的 SPI 模块、JSON Schema 和集成测试为准。
+
 ## 2. URRE API
 
 统一前缀：`/api/v1/retrieval`
@@ -44,7 +90,8 @@
   "context": {
     "project_id": "project_456",
     "task_id": "task_123",
-    "shot_plan_id": "shotplan_003"
+    "shot_plan_id": "shotplan_003",
+    "session_id": "session_789"
   },
   "recall": {
     "channels": ["keyword", "semantic", "visual"],
@@ -94,10 +141,15 @@ SearchPlan 必须经过 Schema 校验。租户、Rights 和可见范围等硬约
   "scene": "task_material_recommendation",
   "context": {
     "user_id": "user_123",
+    "session_id": "session_789",
     "project_id": "project_456",
     "task_id": "task_123",
     "current_stage": "material_collection",
     "task_description": "制作一条城市夜生活品牌短片"
+  },
+  "strategy": {
+    "strategy_id": "video_project_recommend_v1",
+    "objective": "task_fit_then_diversity"
   },
   "limit": 30,
   "diversity": {
@@ -106,6 +158,8 @@ SearchPlan 必须经过 Schema 校验。租户、Rights 和可见范围等硬约
   }
 }
 ```
+
+`RecommendationStrategy` 由 Domain Pack / 服务端策略注册表选择，负责确定推荐场景、目标和约束。客户端只能请求授权范围内的策略 ID；实际候选召回、排序和重排由 URRE Recommendation Service 执行。`session_id` 只用于交互连续性，Project、Task 和 Artifact 仍是业务权威状态。
 
 ### 2.3 Explore 请求
 
@@ -223,6 +277,10 @@ Tool 只暴露语义能力，不暴露底层客户端。
 | `recommend_video_materials` | RecommendationRequest | RecommendationSet | L0 只读 |
 | `find_similar_shots` | EntityRef + constraints | CandidateSet | L0 只读 |
 | `explore_video_materials` | Seed + goal | ExplorationSet | L0 只读 |
+| `rerank_candidates` | CandidateSet ref + authorized ranking policy | CandidateSet | L0 只读 |
+| `explain_retrieval_result` | request_id / result ref + explanation scope | ExplanationReport | L0 只读 |
+| `get_profile_summary` | user / context ref + purpose | ProfileSummary | L0 只读，敏感 |
+| `record_feedback_event` | FeedbackEventRequest + source + confirmation ref | FeedbackReceipt | L1 事件写入 |
 | `get_project_context` | project_id | ProjectContext | L0 只读 |
 | `get_artifact` | artifact_id | Artifact | L0 只读 |
 | `create_artifact` | type + schema + content | ArtifactRef | L1 写草稿 |
@@ -239,6 +297,14 @@ Tool 只暴露语义能力，不暴露底层客户端。
 - 风险等级与审批策略。
 - 超时、重试、幂等键和调用预算。
 - 审计字段、错误码和结果脱敏策略。
+
+补充约束：
+
+- `rerank_candidates` 只能重排调用方已经获得的候选集，不能扩大候选范围、恢复已被硬约束过滤的候选或更换未注册的排序模型。
+- `explain_retrieval_result` 只能解释已有请求、候选、召回通道和证据；结果必须区分事实、模型判断与未知项。
+- `get_profile_summary` 必须声明调用目的，只返回完成当前任务所需的最小字段，并受租户、用户和数据范围权限约束；不得暴露原始行为序列、敏感属性或完整画像。
+- `record_feedback_event` 只记录真实 UI 行为或用户明确确认的结果，必须携带 `source`、`occurred_at` 和幂等键；Agent 不得根据自身判断伪造点击、采用、下载或转化事件。
+- 通用 Toolkit 名称与领域 Tool 可以不同，但领域 Tool 必须映射到对应的 URRE 或领域基础服务，并遵守相同的 Policy Gateway 规则。
 
 示例：
 
