@@ -36,6 +36,8 @@ URRE（Universal Retrieval & Recommendation Engine）面向视频、商品、广
 
 ## 3. 总体架构
 
+![通用检索推荐系统能力全景](images/通用检索推荐系统架构图.png)
+
 ```mermaid
 flowchart TB
   CLIENT[业务应用 / Agent / Domain Pack] --> API[统一 API Gateway]
