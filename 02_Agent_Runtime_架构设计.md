@@ -1,14 +1,8 @@
 # Agent Runtime 与任务治理架构设计 2.0
 
-> **文档层级：** Agent Runtime 与任务治理专项规范  
-> **上位文档：** [00 平台总体架构](00_检索推荐与Agent平台_架构设计2.0.md)  
-> **关联文档：** [01 URRE](01_URRE通用检索推荐引擎_架构设计2.0.md)、[03 Video Domain Pack](03_Video_Domain_Pack与创作执行_架构设计2.0.md)  
-> **研究依据：** [research](research/README.md)  
-> **实施材料：** [implementation](implementation/README.md)
+**定位：** 面向多领域 Agent 的任务控制、协作编排与安全治理层
 
-**版本：** 2.0  
-**定位：** 面向多领域 Agent 的任务控制、协作编排与安全治理层  
-**建议技术方向：** AgentScope Java 2.0 + Spring Boot（具体 API 与版本以实施时官方文档验证为准）
+**建议技术方向：** AgentScope Java 2.0 + Spring Boot
 
 ---
 

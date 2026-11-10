@@ -1,13 +1,7 @@
-# URRE 通用检索推荐引擎架构设计 2.0
+# URRE 通用检索推荐引擎架构设计
 
-> **文档层级：** 检索推荐专项规范  
-> **上位文档：** [00 平台总体架构](00_检索推荐与Agent平台_架构设计2.0.md)  
-> **关联文档：** [02 Agent Runtime](02_Agent_Runtime与任务治理_架构设计2.0.md)、[03 Video Domain Pack](03_Video_Domain_Pack与创作执行_架构设计2.0.md)  
-> **研究依据：** [research](research/README.md)  
-> **实施材料：** [implementation](implementation/README.md)
+**定位：** 多领域候选发现、相关性计算、排序与反馈优化平台
 
-**版本：** 2.0  
-**定位：** 多领域候选发现、相关性计算、排序与反馈优化平台  
 **边界：** 不承担完整 Agent 任务规划；不承载领域创作执行
 
 ---

@@ -1,13 +1,7 @@
 # Video Domain Pack 与视频创作执行架构设计 2.0
 
-> **文档层级：** 视频领域专项规范  
-> **上位文档：** [00 平台总体架构](00_检索推荐与Agent平台_架构设计2.0.md)  
-> **关联文档：** [01 URRE](01_URRE通用检索推荐引擎_架构设计2.0.md)、[02 Agent Runtime](02_Agent_Runtime与任务治理_架构设计2.0.md)  
-> **研究依据：** [research](research/README.md)  
-> **实施材料：** [implementation](implementation/README.md)
+**定位：** URRE + Agent Runtime 之上的视频领域能力包与创作执行系统
 
-**版本：** 2.0  
-**定位：** URRE + Agent Runtime 之上的视频领域能力包与创作执行系统  
 **范围：** 视频素材检索、镜头证据检索、任务推荐、创作规划、素材分配、混剪与成片交付
 
 ---
