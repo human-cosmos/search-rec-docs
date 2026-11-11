@@ -7,7 +7,7 @@
 1. [`00_架构设计总纲.md`](00_架构设计总纲.md)：已冻结原则、边界、能力里程碑 A–D、架构 ADR（`ADR-01`–`ADR-12`）。
 2. [`01_URRE架构设计.md`](01_URRE架构设计.md)、[`02_AgentRuntime架构设计.md`](02_AgentRuntime架构设计.md)、[`03_VideoDomain架构设计.md`](03_VideoDomain架构设计.md)：专项架构。Task 状态机以 `02` §4.2 为准。
 3. [`implementation/01_API与数据契约.md`](implementation/01_API与数据契约.md)：字段级契约。
-4. [`implementation/02_技术选型与服务部署.md`](implementation/02_技术选型与服务部署.md)、[`implementation/03_实施路线图与验收基线.md`](implementation/03_实施路线图与验收基线.md)：选型、工程阶段 0–5、实施决策（`IMPL-ADR-01`–`IMPL-ADR-11`）。
+4. [`implementation/02_技术选型与服务部署.md`](implementation/02_技术选型与服务部署.md)、[`implementation/03_实施路线图与验收基线.md`](implementation/03_实施路线图与验收基线.md)：选型、工程阶段 0–5、实施决策（`IMPL-ADR-01`–`IMPL-ADR-12`）。
 5. [`04_开源项目源码解析与设计指南.md`](04_开源项目源码解析与设计指南.md)：**仅调研附录**，不是目标架构、阶段计划、API 或技术选型权威。
 
 实施材料的目录说明见 [`implementation/README.md`](implementation/README.md)。
