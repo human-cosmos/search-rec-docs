@@ -188,7 +188,7 @@ Search 与 Recommendation 必须有独立目标函数与评估集。即使底层
 
 - **关键词与向量分开召回。** BM25、中文分词、聚合和复杂全文查询由 Elasticsearch/OpenSearch 承担；Qdrant 负责文本向量、视觉向量和相似检索。两类结果在 URRE 内合并、去重和 RRF 融合，不在不同存储之间直接比较原始分数。
 - **硬过滤进入向量查询。** `tenant_id`、Rights 状态、对象状态和项目范围由服务端可信上下文注入，并作为 Qdrant 查询条件在召回阶段执行。Agent 和 Domain Pack 不得移除或覆盖硬过滤条件。
-- **Collection 按向量空间管理。** 默认按“领域 + 向量类型 + Embedding 模型主版本”划分 Collection，例如 `video_text_v1`、`video_visual_v1`。通过 Alias 支持双写、重建和切换，不把租户数量直接映射为无限多的物理 Collection。
+- **Collection 按向量空间管理。** 默认按“领域 + 向量类型 + Embedding 模型主版本”划分 Collection，例如 `video_text_v1`、`video_visual_v1`。新索引通过 Manifest 选择当前物理 Collection；Qdrant Alias 可用于单库内部兼容，但不能承担 ES 与 Qdrant 的跨系统发布。不把租户数量直接映射为无限多的物理 Collection。
 - **数据与索引版本可追溯。** Point ID、对象版本、Embedding 模型版本、索引配置版本和索引更新时间必须可追踪；模型升级通过影子索引和受控切换完成，不在原索引上直接覆盖。
 - **访问通过 Adapter 隔离。** URRE 只依赖统一的 `VectorStorePort`，Agent 和领域服务不得直连 Qdrant。生产环境必须启用副本、快照、容量告警、慢查询监控和索引重建演练。
 
@@ -208,6 +208,9 @@ Search 与 Recommendation 必须有独立目标函数与评估集。即使底层
 Domain Pack 应向 URRE 注册：
 
 - Domain Schema / Entity Type。
+- Source Adapter / Processing Profile IDs。
+- Embedding Profile IDs。
+- Index Profile / Index Schema Versions。
 - Feature Definitions。
 - Query Parser / Context Adapter。
 - Recall Strategy IDs。
@@ -218,7 +221,7 @@ Domain Pack 应向 URRE 注册：
 - Evaluation Dataset / Metrics。
 - Rights & Availability Rules。
 
-策略配置只引用经过注册和校验的策略 ID；不允许由请求参数任意加载代码、表达式或查询 DSL。
+策略配置只引用经过注册和校验的策略、Processing、Embedding 与 Index Profile ID；不允许由请求参数任意加载代码、表达式或查询 DSL。Profile 的创建、发布、回滚和废弃必须版本化，在线请求不能引用 Draft 版本。
 
 ### 6.1 公共对象与领域对象
 
@@ -318,22 +321,113 @@ Adoption@K、NDCG@K、覆盖度、多样性、新颖性、重复率、任务完�
 
 ---
 
-## 10. 索引摄入与在线服务解耦
+## 10. 原材料加工与索引平面
 
-对象接入、媒体理解、特征计算、索引构建属于离线/准实时数据生产链路，不由对话 Agent 负责。
+### 10.1 定位与事实源
+
+原材料加工与索引平面是 URRE 的一等数据生产层，负责把视频、商品、文档和外部内容转换为可检索对象。对象主数据、版本化加工产物和特征是可追溯的事实来源；Elasticsearch、Qdrant 中的全文索引、向量和属性字段是可由加工产物重建的派生数据。
+
+URRE 在线检索不直接读取原始视频或商品文件。Agent 可以通过受治理 Tool 发起批量入库、重处理或索引重建任务，但不得执行转码、抽帧、内容理解、Embedding 或底层索引写入。
 
 ```mermaid
 flowchart LR
-  SOURCE[对象来源] --> INGEST[接入与校验]
-  INGEST --> UNDERSTAND[内容理解 / 特征抽取]
-  UNDERSTAND --> MASTER[对象主数据与特征]
-  MASTER --> BUILD[索引构建 / 增量更新]
-  BUILD --> SERVE[URRE 在线服务]
-  SERVE --> EVENTS[反馈事件]
-  EVENTS --> PROFILE[画像 / 训练 / 评估]
+  RAW[原材料 / 外部来源] --> INGEST[Ingest Worker：登记与校验]
+  INGEST --> RAWSTORE[不可变原始对象 + 主数据]
+  RAWSTORE --> PROCESS[Content Processing Worker]
+  PROCESS <--> MODEL[Embedding / 视觉 / ASR / OCR 等模型服务]
+  PROCESS --> ARTIFACT[版本化加工产物与特征]
+  ARTIFACT --> INDEXW[Indexing Worker]
+  INDEXW --> MANIFEST[Index Manifest]
+  INDEXW --> ES[Elasticsearch / OpenSearch]
+  INDEXW --> QDRANT[Qdrant]
+  MANIFEST --> ACTIVATE{校验后发布}
+  ACTIVATE --> URRE[URRE 在线服务]
 ```
 
-Agent 可以发起受控的“新增素材入库”业务任务，但实际接入、转码、抽帧、理解、索引和状态管理由专门的数据生产流水线执行。
+### 10.2 处理阶段与职责
+
+| 阶段 | 主要职责 | 产物 | 不应承担 |
+|---|---|---|---|
+| Source Registration | 登记来源、租户、Rights、访问凭据和批处理范围 | `IngestionJob`、原始对象引用 | 内容理解和召回排序 |
+| Ingest / Validate | 下载或挂载、校验 hash、格式、病毒与权限，保存不可变原件 | 原始对象、规范化元数据 | 直接向在线索引写入未加工内容 |
+| Normalize | 转码、抽帧、镜头切分、商品字段清洗、文档分块等领域标准化 | 派生媒体、Shot / Segment、标准字段 | 业务推荐策略和最终排序 |
+| Understand | ASR、OCR、视觉理解、分类、标签、实体和关系抽取 | 版本化分析结果与证据 | 修改原始对象或掩盖来源 |
+| Embed | Content Processing 内的子阶段；按注册模型生成文本、视觉、多模态或商品表示 | 向量、模型版本、归一化参数 | 直接决定最终业务分数；默认不要求独立 Worker |
+| Index Build | 批量生成搜索文档和 Qdrant Point，执行 upsert、回填和校验 | ES 文档、Qdrant Point、索引统计 | 绕过加工产物临时拼接字段 |
+| Publish | 校验后切换 Active Manifest 指针，在线别名仅作为 Manifest 内部资源 | 可回滚的 index version | 在未校验时覆盖当前在线索引 |
+
+各阶段使用 Kafka 或等价持久队列传递任务事件。MVP 可以把多个 Worker 打包在同一个部署单元中，但队列、幂等键和职责边界必须分离。媒体预览、时间线编译和导出由 `Media Worker` 负责，不与数据加工 Worker 混用。
+
+领域通过 `ProcessingProfile` 和 Adapter 扩展处理能力：
+
+- 视频 Domain Pack：转码、抽帧、镜头切分、ASR、OCR、视觉理解和镜头级 Embedding。
+- 商品 Domain Pack：SKU 映射、标题/卖点/属性清洗、商品图处理和多模态 Embedding。
+- 其他 Domain Pack：文档分块、字段映射、内容理解和该领域需要的向量空间。
+
+`ProcessingProfile`、Embedding 模型版本、分块规则和索引 Schema 都必须版本化。在线请求只能使用已发布 Profile，不允许 Agent 动态指定未注册的解析器、模型或索引 Schema。
+
+### 10.3 批处理、增量与重建
+
+同一套加工能力必须同时支持以下模式：
+
+- **初始批量加工：** 对流式或对象存储中的素材批量创建 `IngestionJob`，按租户、来源和 Processing Profile 分片执行。
+- **增量加工：** 新对象、内容更新和模型升级通过事件触发局部重处理；Rights 变化只触发索引过滤字段与 Rights 缓存更新，不扫描全库，也不重新生成 Embedding。
+- **定向回填：** 指定时间范围、来源、租户或失败集合重新加工，不覆盖无关对象。
+- **索引重建：** 从事实源和加工产物重建 ES 文档与 Qdrant Point，用于模型升级、Schema 变更和索引损坏恢复。
+
+版本与幂等必须分层，不能用一个键同时表达内容加工和索引发布：
+
+- `content_version`：由 `data-control-plane` 在 `source-uploads/finalize` 校验通过并生成不可变对象后分配；原始二进制发生合法替换时递增。
+- `metadata_version`：由领域业务服务在标题、标签、属性等权威元数据变化时递增。
+- `rights_version`：由 Rights Service 在许可、地域、到期时间、商业用途或归属要求变化提交后递增。
+- **Processing Key**：`tenant_id + entity_type + entity_id + content_version + metadata_version + processing_profile_version`。
+- **Embedding Key**：`processing_artifact_hash + embedding_space + embedding_model_version`；文本、视觉和多模态向量分别计算。
+- **Index Item Key**：`tenant_id + index_profile_version + index_target + entity_type + entity_id + metadata_version + rights_version + processing_artifact_hash + index_embedding_outputs_hash`。
+- **Request Idempotency Key**：客户端重复提交同一个批处理请求时返回同一个 Job；它不能替代上述内容、加工和索引幂等键。
+
+客户端和 Worker 不得自行覆盖上述权威版本。`index_embedding_outputs_hash` 是该 Index Target 实际使用的一组向量空间、模型版本、维度和输出 hash 的稳定摘要。内容与元数据结构变化必须通过明确规则递增版本；Rights 变化可以只更新索引硬过滤字段，不必重新生成 Embedding。重复投递、Worker 重启和人工重试必须得到同一结果，不得产生重复对象、无版本变更的向量或错误覆盖新版本。
+
+Item 与 Batch 使用不同状态机：
+
+- **Item：** `Accepted → Ingesting → Processing → Embedding → Indexing → Validating → Active`，另有 `Failed` / `Cancelled`。
+- **Batch：** `Accepted → Running → Completed`，允许 `PartiallyCompleted`，另有 `Failed` / `Cancelled`。
+
+Batch 汇总 Item 的成功、失败和重试数量。视频 API 中的 `ingest_status`、`analysis_status` 和 `index_status` 是从 Item 状态投影出的粗粒度摘要，不是独立状态事实源。持续失败进入死信队列，不能无限重试阻塞主队列。
+
+`data-control-plane` 必须在创建 Job 前校验租户的对象数、并发、存储和处理成本配额。超过配额时直接拒绝，不得先接收再依赖队列自然限流。
+
+### 10.4 索引一致性与发布
+
+Elasticsearch/OpenSearch 与 Qdrant 的双写不是原子事务，因此不能把“两边都调用成功”当作发布完成。**唯一的原子发布点是控制面中的 `Active Index Manifest`**；ES Alias、Qdrant Alias 和物理索引名称只是 Manifest 引用的资源，不分别承担跨系统发布。
+
+Index Manifest、Profile 注册表、Job 状态和租户配额由 `data-control-plane` 持久化到关系数据库，字段级契约见 [implementation/01 §5.5](implementation/01_API与数据契约.md#55-indexmanifest)。至少包含：
+
+- `manifest_id`、`domain`、`index_profile_version`、`source_snapshot_id`。
+- ES 物理索引 / Alias、Qdrant Collection / Alias、Embedding 与 Processing 版本。
+- 各目标文档数、Point 数、对象主键集合摘要、内容 hash、校验结果。
+- 状态 `Draft` / `Validated` / `Active` / `Failed` / `RolledBack`、创建人和发布时间。
+
+全量重建、Embedding 模型升级和 Index Schema 升级采用不可变的新索引版本：
+
+1. 为一次处理快照生成新的 `index_version`。
+2. Indexing Worker 写入新的 Draft ES 索引和 Qdrant Collection，不覆盖当前在线版本。
+3. Indexing Worker 分别校验每个 target 的预期文档/Point 数量、逻辑对象主键覆盖、hash、关键字段和失败集合，并提交校验报告；不要求 ES 文档数与 Qdrant Point 数机械相等。
+4. 任一侧写入或校验失败时，`data-control-plane` 将整个 Manifest 标记为 `Failed`，不得发布部分结果，也不得切换在线指针。
+5. `data-control-plane` 复核校验报告后把 Manifest 标记为 `Validated`；只有它才能在一个关系数据库事务中通过 CAS 将 Manifest 标记为 `Active` 并切换 `Active Manifest` 指针。
+6. 在线请求开始时读取一次 Active Manifest，并在整个请求内固定使用其中的 ES/Qdrant 资源，避免一次请求跨两个版本。
+7. 观察质量、错误率和索引延迟，完成灰度后再下线旧版本。
+
+日常小批量增量可以复用当前索引代际，但必须先把相关 Item 在 ES 与 Qdrant 两侧完成幂等写入和差异校验，再由 `data-control-plane` 推进 Manifest 的同步水位；任何一侧失败都不能推进水位。Worker 不得直接修改 Active 指针。需要完整回滚、模型/Schema 变更或大批量回填时，仍使用新的不可变索引版本。无法提供 Item 级可见性隔离时，不得声称跨存储原子发布。
+
+ES 与 Qdrant 都必须保存 `tenant_id`、对象状态、`rights_version` 和可用于召回的静态 Rights 标志。`territory`、`expiry_at` 和任务用途等动态条件同时由在线 Rights Service 校验：索引字段用于缩小候选范围，Rights Service 对召回后、排序前的小候选集做权威判定；索引摘要不能成为唯一安全边界。仅 Rights 变化时更新索引过滤字段和 Rights 缓存，不重新生成 Embedding。
+
+敏感原文和长期签名地址不进入向量 Payload。结果只返回受控 `evidence_ref`；在线 Evidence Resolver 组织缩略图、时间区间、转写摘要或短期预览地址，并重新执行租户、项目、Rights 和用途校验。Evidence Resolver 不暴露未授权源文件路径。
+
+### 10.5 可观测性与验收
+
+数据加工平面至少监控：队列积压、各阶段吞吐、单对象耗时、模型调用失败率、死信数量、批次完成率、处理到可检索延迟、索引文档/Point 差异、索引版本分布、重建耗时和单位对象成本。
+
+验收必须证明：原始素材可重复加工；Worker 重试不产生重复结果；ES 与 Qdrant 可从同一加工快照重建；模型或 Schema 升级可以双版本构建，并通过 Active Manifest 发布和回滚；任一侧索引失败时 Manifest 保持原在线版本；仅 Rights 变化可以在不重新 Embedding 的情况下更新过滤字段并由 Rights Service 正确裁决；跨租户和 Rights 过滤在索引发布前后均有效；在线服务不依赖原始文件路径或对话 Agent。
 
 ---
 
@@ -358,6 +452,6 @@ Agent 可以发起受控的“新增素材入库”业务任务，但实际接�
 4. 返回结果可追溯到策略、模型、召回通道和证据。
 5. 反馈事件可关联请求、候选集、用户行为和后续业务结果。
 6. 简单请求不需要启动 Agent。
-7. 索引摄入链路与 Agent 对话链路解耦。
+7. 原材料加工与索引平面可同时执行批量、增量和重建任务，并与 Agent 对话链路解耦。
 8. 新增领域主要通过 Domain Pack 扩展，不复制 URRE 核心流水线。
 9. Embedding、Two-Tower、DNN Ranker 和 Reranker 具有独立版本、接口边界、降级策略和可归因指标。

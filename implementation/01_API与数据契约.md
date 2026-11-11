@@ -8,7 +8,7 @@
 ## 1. 契约原则
 
 1. Search、Recommendation、Similarity、Explore 使用独立语义和独立接口。
-2. Agent 只调用语义化 Tool/API，不直接访问 Elasticsearch、Milvus、Redis 或数据库。
+2. Agent 只调用语义化 Tool/API，不直接访问 Elasticsearch、Qdrant 或其他向量库、Redis 或数据库。
 3. 租户、用户和项目权限由服务端可信上下文注入，请求体不能覆盖。
 4. 所有写操作声明幂等键、风险等级、审批要求和审计字段。
 5. 所有结果返回策略版本、证据和可追溯标识。
@@ -241,7 +241,7 @@ SearchPlan 必须经过 Schema 校验。租户、Rights 和可见范围等硬约
 
 线上默认不返回详细调试字段。诊断信息仅在授权诊断和实验场景提供，并执行脱敏和访问控制。
 
-## 3. 视频项目与任务 API
+## 3. 视频项目、任务与数据加工 API
 
 ### 3.1 项目和任务
 
@@ -283,6 +283,108 @@ SearchPlan 必须经过 Schema 校验。租户、Rights 和可见范围等硬约
 | `POST` | `/api/v1/video/exports` | 创建经授权的导出任务 |
 | `GET` | `/api/v1/video/exports/{exportJobId}` | 获取导出状态 |
 
+### 3.4 数据加工与索引入口
+
+原始素材通过统一数据加工入口进入系统，业务 API 不直接向 Elasticsearch 或 Qdrant 写入。上传会话、Job、Profile、配额和 Active Manifest 指针由 `data-control-plane` 管理；Worker 只能上报处理结果和校验报告。
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `POST` | `/api/v1/data/source-uploads` | 创建受控上传会话，返回 `upload_id` 和短期有效的上传地址 |
+| `GET` | `/api/v1/data/source-uploads/{uploadId}` | 查询上传状态、已接收大小和校验结果 |
+| `POST` | `/api/v1/data/source-uploads/{uploadId}/finalize` | 校验上传完成、文件 hash 和大小，返回不可变 `source_ref` |
+| `POST` | `/api/v1/data/ingestion-jobs` | 批量登记 `source_ref`，执行校验、加工、Embedding 和索引 |
+| `GET` | `/api/v1/data/ingestion-jobs/{jobId}` | 查询批次及各阶段状态、失败项和可重试项 |
+| `POST` | `/api/v1/data/ingestion-jobs/{jobId}/retry` | 重试失败或指定对象，必须幂等 |
+| `POST` | `/api/v1/data/index-builds` | 基于事实源和加工产物创建全量或回填索引任务 |
+| `GET` | `/api/v1/data/index-builds/{jobId}` | 查询索引构建、校验和发布状态 |
+
+批量加工请求示例：
+
+```json
+{
+  "domain": "video",
+  "source_refs": ["objref_001", "objref_002"],
+  "processing_profile_version": "video_default_v1",
+  "embedding_profile_version": "video_multimodal_v1",
+  "index_profile_version": "video_hybrid_v1",
+  "index_targets": ["keyword", "text_vector", "visual_vector"]
+}
+```
+
+`source-uploads/finalize` 必须以服务端登记的预期大小和客户端提供的 SHA-256 校验对象；同一上传会话的重复 finalize 返回相同 `source_ref`，不得创建重复原始对象。
+
+索引重建请求示例：
+
+```json
+{
+  "domain": "video",
+  "index_profile_version": "video_hybrid_v1",
+  "source_snapshot_id": "snapshot_20261111_001",
+  "scope": {
+    "ingestion_job_ids": ["ingest_001"],
+    "failed_item_refs": [],
+    "updated_after": "2026-11-01T00:00:00+08:00",
+    "updated_before": null
+  },
+  "mode": "full_rebuild",
+  "publish": "activate_after_validation"
+}
+```
+
+`mode` 枚举为 `full_rebuild` / `backfill` / `repair`；`publish` 枚举为 `draft_only` / `activate_after_validation`。租户与授权范围由服务端注入，客户端不能通过 `scope` 扩大可见范围。`activate_after_validation` 需要独立索引管理权限；Agent Tool 默认只能创建 Draft，不能直接激活生产索引。重建结果必须返回 `index_version` 和 `manifest_id`。
+
+约束：
+
+- 租户、用户和数据范围由服务端可信上下文注入，请求体不得覆盖。
+- `processing_profile_version`、`embedding_profile_version` 和 `index_profile_version` 必须是已注册且已发布的版本。
+- `index_targets` 是当前 Index Profile 声明的枚举子集；`index_profile_version` 固定每个 target 的 Schema 版本。客户端不能传入自由字符串、底层索引名或未注册 Schema。
+- 写入请求必须携带 `Idempotency-Key`。重复提交返回同一 Job，不得重复创建素材或向量。
+- 客户端提交成功只表示任务已受理，不表示内容已可检索；在线可见性以索引校验和发布结果为准。
+- Agent 只能通过受控 Tool 提交任务和查询状态，不能指定原始文件系统路径、FFmpeg 命令、SQL、任意模型或底层索引地址。
+- 批量任务必须返回受理数、不可处理数、失败项引用、配额消耗和后续状态查询地址。
+- 服务端必须按租户配置单批对象数、并发、存储和处理成本上限；超过配额时拒绝创建 Job，不能先接收再无限排队。
+
+数据 Job 的 Item 与 Batch 状态定义为：
+
+| 对象 | 状态 | 说明 |
+|---|---|---|
+| Item | `Accepted` / `Ingesting` / `Processing` / `Embedding` / `Indexing` / `Validating` / `Active` | 单个对象的加工与发布状态 |
+| Item 终态 | `Failed` / `Cancelled` | 保留失败阶段、错误码和是否可重试 |
+| Batch | `Accepted` / `Running` / `PartiallyCompleted` / `Completed` | 汇总 Item 成功、失败和重试数量 |
+| Batch 终态 | `Failed` / `Cancelled` | 失败或取消批次仍保留逐 Item 结果 |
+
+视频元数据中的 `ingest_status`、`analysis_status` 和 `index_status` 是兼容用粗粒度投影，不能作为独立状态机。所有 Item 与 Batch 转换发布 `data.job.status_changed` 事件，并携带 `job_kind`、`job_id`、`item_ref`、`from`、`to` 和 `stage`。
+
+| 投影字段 | 映射 |
+|---|---|
+| `ingest_status` | `Accepted` → `pending`；`Ingesting` → `running`；进入 `Processing` 后为 `completed`，Ingest 阶段失败为 `failed` |
+| `analysis_status` | `Accepted` / `Ingesting` → `pending`；`Processing` / `Embedding` → `running`；`Indexing` 起为 `completed`，分析或 Embedding 失败为 `failed` |
+| `index_status` | `Indexing` / `Validating` → `running`；`Active` → `active`；索引阶段失败为 `failed` |
+
+`Cancelled` 在所有投影字段中映射为 `cancelled`。这些字段不能反向触发状态转换。
+
+### 3.5 证据解析
+
+检索结果只返回受控 `evidence_ref`，客户端或 Agent 不能根据内部路径自行拼接媒体地址。
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `POST` | `/api/v1/evidence/resolve` | 批量解析候选证据，返回摘要、时间区间和经授权的短期预览地址 |
+
+请求示例：
+
+```json
+{
+  "evidence_refs": ["frame_012500", "clip_preview_009"],
+  "purpose": "material_preview",
+  "usage_context": {
+    "project_id": "project_456"
+  }
+}
+```
+
+Evidence Resolver 必须重新校验租户、项目、Rights、用途和地域，返回逐项允许/拒绝结果和过期时间。租户、用户和地域来自服务端可信上下文，不能由客户端覆盖。不得把原始文件系统路径、长期对象存储地址或无权限源文件地址写入日志或响应。
+
 ## 4. Agent Tool 契约
 
 Tool 只暴露语义能力，不暴露底层客户端。
@@ -299,6 +401,9 @@ Tool 只暴露语义能力，不暴露底层客户端。
 | `get_project_context` | project_id | ProjectContext | L0 只读 |
 | `get_artifact` | artifact_id | Artifact | L0 只读 |
 | `create_artifact` | type + schema + content | ArtifactRef | L1 写草稿 |
+| `submit_data_processing_job` | domain + authorized source refs + registered profile | DataJobRef | L2 资源消耗 |
+| `get_data_processing_job` | job_id | DataJobStatus | L0 只读 |
+| `resolve_evidence` | evidence refs + purpose + usage context | EvidenceViewSet | L0 只读，敏感 |
 | `assign_materials` | ShotPlan + candidates | AssignmentSet | L1 写草稿 |
 | `validate_timeline` | TimelineIR | ValidationReport | L0 只读 |
 | `render_preview` | TimelineIR ref | RenderJobRef | L2 资源消耗 |
@@ -318,6 +423,8 @@ Tool 只暴露语义能力，不暴露底层客户端。
 - `rerank_candidates` 只能重排调用方已经获得的候选集，不能扩大候选范围、恢复已被硬约束过滤的候选或更换未注册的排序模型。
 - `explain_retrieval_result` 只能解释已有请求、候选、召回通道和证据；结果必须区分事实、模型判断与未知项。
 - `get_profile_summary` 必须声明调用目的，只返回完成当前任务所需的最小字段，并受租户、用户和数据范围权限约束；不得暴露原始行为序列、敏感属性或完整画像。
+- `submit_data_processing_job` 只能引用调用者有权访问的来源和已注册 Processing/Embedding/Index Profile，不得绕过租户/Rights 校验、单批上限、成本配额或直接写入 ES/Qdrant；完成状态必须由 Job 事件确认。
+- `resolve_evidence` 必须携带用途和上下文，只返回调用者有权查看的最小证据；拒绝项不能泄露对象是否存在。
 - 通用 Toolkit 名称与领域 Tool 可以不同，但领域 Tool 必须映射到对应的 URRE 或领域基础服务，并遵守相同的 Policy Gateway 规则。
 - Agent 默认不拥有高价值反馈写入 Tool。曝光与点击等 UI 遥测由前端/Event Service 记录；`material.assigned`、`material.timeline_adopted`、`material.final_kept` 和导出转化由业务 Service 在状态迁移成功后通过 Outbox 发出。
 
@@ -370,7 +477,8 @@ Video 元数据至少按以下类别维护：
 - 质量：分辨率、清晰度、稳定性、曝光和压缩质量分数。
 - 内容理解：标题、描述、标签、场景、动作、主体、情绪及合法合规的敏感用途说明。
 - 模型版本：ASR、OCR、视觉理解和 Embedding 版本。
-- 生命周期：`ingest_status`、`analysis_status`、`index_status`、`created_at`、`updated_at`。
+- 版本：`content_version`、`metadata_version`、`rights_version`、`processing_artifact_version`、`embedding_versions`、`index_profile_version`。
+- 生命周期：`ingestion_job_id`、`processing_job_id`、`index_job_id`、`ingest_status`、`analysis_status`、`index_status`、`active_index_version`、`created_at`、`updated_at`。
 
 视频领域关系不能只使用一个 `similar_to`。至少区分视觉相似、语义相关、同场景、同实体、替代拍摄、叙事衔接、互补、项目采用和 Shot 分配，并记录关系来源、置信度、模型版本和更新时间。
 
@@ -464,6 +572,53 @@ EditDecision 表达顺序、入出点和编辑意图。绝对 `timeline_start_ms
 - `permission_scope`
 - `created_at`
 
+### 5.5 IndexManifest
+
+IndexManifest 是 ES 与 Qdrant 索引版本的发布清单。控制面只保存一个当前 Active Manifest 指针，切换该指针时使用版本号 CAS，不能分别把两个底层 Alias 当作跨系统事务。
+
+```json
+{
+  "manifest_id": "manifest_20261111_001",
+  "domain": "video",
+  "index_profile_version": "video_hybrid_v1",
+  "source_snapshot_id": "snapshot_20261111_001",
+  "processing_versions": ["video_default_v1"],
+  "embedding_versions": ["video_multimodal_v1"],
+  "targets": [
+    {
+      "engine": "elasticsearch",
+      "physical_name": "video_search_20261111_001",
+      "alias": "video_search_active_candidate",
+      "schema_version": "video_keyword_schema_v3",
+      "document_count": 100000,
+      "checksum": "sha256:..."
+    },
+    {
+      "engine": "qdrant",
+      "physical_name": "video_text_20261111_001",
+      "alias": "video_text_active_candidate",
+      "schema_version": "video_text_vector_schema_v2",
+      "point_count": 100000,
+      "checksum": "sha256:..."
+    }
+  ],
+  "status": "validated",
+  "parent_manifest_id": "manifest_20261110_003",
+  "created_by": "data-control-plane",
+  "built_by": "indexing-worker",
+  "created_at": "2026-11-11T10:00:00+08:00",
+  "activated_at": null
+}
+```
+
+发布流程必须满足：
+
+- 所有 target 的校验报告提交给 `data-control-plane` 并复核通过后，Manifest 才能进入 `Validated`；每个 target 使用自己的预期数量、逻辑对象主键覆盖和关键字段标准，ES 文档数不要求与多向量 Qdrant Point 数相等。
+- 任一侧失败时 Manifest 进入 `Failed`，不得发布成功目标或切换 Active 指针。
+- 只有 `data-control-plane` 能执行激活；激活使用 `expected_current_manifest_id + version` 的 CAS，冲突时拒绝覆盖并重新校验。
+- 在线请求固定使用请求开始时读取的 Manifest；旧 Manifest 在所有引用请求和灰度窗口结束后才能回收。
+- 日常增量不满足 Item 级可见性隔离时，只能进入 `Draft` 或创建新索引代际，不能声称已原子发布。
+
 ## 6. 事件契约
 
 ### 6.1 统一字段
@@ -497,6 +652,14 @@ EditDecision 表达顺序、入出点和编辑意图。绝对 `timeline_start_ms
 - `video.ingested`
 - `video.analysis.completed`
 - `video.indexed`
+- `data.ingestion.accepted`
+- `data.asset.normalized`
+- `data.analysis.completed`
+- `data.embedding.completed`
+- `data.indexing.completed`
+- `data.indexing.failed`
+- `data.index.activated`
+- `data.job.status_changed`
 - `retrieval.requested`
 - `retrieval.completed`
 - `recommendation.impression`
@@ -560,3 +723,5 @@ EditDecision 表达顺序、入出点和编辑意图。绝对 `timeline_start_ms
 - 预算、步骤或资源耗尽。
 
 有副作用的请求必须携带幂等键。重试不能重复创建渲染任务、审批记录、导出请求或其他不可逆操作。
+
+数据加工请求的客户端幂等键只用于识别同一请求；内容、Embedding 和索引写入还必须使用服务端生成的 Processing、Embedding 和 Index Item Key。`data-control-plane` 拒绝 Worker 直接切换 Active Manifest，并把 CAS 冲突映射为可重试的版本冲突错误。

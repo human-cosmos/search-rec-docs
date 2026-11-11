@@ -83,9 +83,11 @@ video-domain-agent/
 │   ├── recommendation/
 │   ├── feedback/
 │   └── retrieval-client/
+├── data-platform/
+│   └── data-control-plane/
 ├── workers/
 │   ├── ingest-worker/
-│   ├── understanding-worker/
+│   ├── content-processing-worker/
 │   ├── indexing-worker/
 │   ├── media-worker/
 │   └── event-worker/
@@ -1728,10 +1730,10 @@ make compose-up
 | ID | Ticket | 交付 | 依赖 | Definition of Done |
 |---|---|---|---|---|
 | VDA-009 | Video/Shot/Segment 数据模型 | 数据表与 Schema | 004,008 | 时间区间与层级引用测试通过 |
-| VDA-010 | 样本入库与镜头切分 | ingest worker | 009 | 固定样本可重复生成 Shot |
-| VDA-011 | BM25 + 元数据过滤 | Search channel | 010 | 关键词和硬过滤基线通过 |
-| VDA-012 | 文本向量召回与 RRF | Hybrid Search | 011 | 候选去重、通道失败降级通过 |
-| VDA-013 | CandidateSet API | SearchResult Contract | 012 | 证据、Rights、版本完整 |
+| VDA-010 | 批量入库与内容加工 | Ingest/Content Worker、IngestionJob | 008,009 | 固定样本可重复生成 Shot 和加工产物；内容/元数据/Rights 版本与幂等键测试通过 |
+| VDA-011 | BM25 索引与元数据过滤 | ES Index Writer、Index Manifest | 010 | Active Manifest 为唯一发布指针；单侧失败不发布，Active 指针回滚通过 |
+| VDA-012 | Qdrant 文本向量与 RRF | Embedding/Indexing Worker、Hybrid Search | 010,011 | Point 带模型、Rights 与索引版本；仅 Rights 更新不重跑 Embedding |
+| VDA-013 | CandidateSet API | SearchResult Contract | 012 | 证据引用、Rights、版本完整；Evidence Resolver 权限测试通过 |
 | VDA-014 | 项目上下文推荐 | Recommendation API | 009,013 | Shot/Project context 生效 |
 | VDA-015 | Recommendation Strategy Registry | 策略 ID 与校验 | 014 | Agent 无法提供未注册权重 |
 | VDA-016 | Feedback + Attribution | 事件与幂等 | 007,013,014 | 采用事件可追溯到请求/候选/位置 |
