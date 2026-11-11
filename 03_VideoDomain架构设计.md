@@ -156,7 +156,7 @@ Recommendation Strategy 负责选择推荐场景、目标、约束和策略版�
 flowchart LR
   A[Task Brief] --> B[Creative Brief]
   B --> C[Storyboard]
-  C --> D[Material Requirements]
+  C --> D[ShotPlan]
   D --> E[Candidate Set + Evidence]
   E --> F[Material Assignment]
   F --> G[Edit Decision]
@@ -165,6 +165,8 @@ flowchart LR
   I --> J[Quality Report]
   J --> K[Final Project]
 ```
+
+关系约定：**Storyboard** 是叙事分镜，属于 Creative IR 的一等产物。**ShotPlan** 是由某个 Storyboard 镜头派生的可执行镜头计划，也是一等 Artifact，必须引用 `storyboard_shot_id`。**Material Requirements** 不是顶层 API 资源，而是 ShotPlan（或对应 Storyboard 镜头）内嵌的取材约束。**Material Assignment** 把候选绑定到 ShotPlan。字段级契约以对齐后的 `implementation/01` 为准，并须能映射到本节概念，不得再并列维护第二套定义。
 
 ### 6.1 Task Brief
 
@@ -185,27 +187,36 @@ flowchart LR
 - transition_intent。
 - required / preferred constraints。
 
-### 6.4 Material Requirements
+### 6.4 ShotPlan
 
-把分镜目标转成 URRE 可执行的检索条件，区分：
+ShotPlan 从某个 Storyboard 镜头派生，是可执行的一等 Artifact。每个 ShotPlan 必须引用 `storyboard_shot_id`，并内嵌该镜头的 Material Requirements。实施侧通过 ShotPlan API 创建与更新，不为 Material Requirements 单列顶层资源。
+
+### 6.5 Material Requirements
+
+Material Requirements 把分镜目标转成 URRE 可执行的检索条件，作为 ShotPlan（或对应 Storyboard 镜头）的内嵌约束，而不是独立的顶层 API 资源。它区分：
 - 必须满足（hard constraints）。
 - 优先满足（soft preferences）。
 - 可替代条件（fallback constraints）。
 - 证据要求（必须返回时间区间/关键帧等）。
 
-### 6.5 Material Assignment
+### 6.6 Material Assignment
 
-将候选素材分配到分镜，记录：
-- storyboard_shot_id。
-- selected_asset / selected_segment。
-- selected_time_range。
-- match_evidence。
-- alternatives。
-- selection_reason。
-- user_confirmed。
-- rights_status。
+将候选素材绑定到 ShotPlan，而不是只挂到抽象分镜。概念上应能说明：分配对象是哪一个 `shot_plan_id`、对应哪个 `storyboard_shot_id`、选中了哪条实体引用。本节保留概念名称，便于对照历史表述；字段级最小集以 `implementation/01` §5.2 为准，与本节旧称的对照为：
 
-### 6.6 Edit Decision
+| `03` §6.5 旧称 | 实施字段 |
+|---|---|
+| `storyboard_shot_id` | `storyboard_shot_id`（必填） |
+| （实施补齐） | `shot_plan_id`（必填） |
+| `selected_asset` / `selected_segment`、`selected_time_range` | `entity_ref`（含 `entity_type`、id、`selected_time_range`） |
+| `match_evidence` | `match_evidence` |
+| `alternatives` | `alternatives` |
+| `selection_reason` | `selection_reason` |
+| `user_confirmed` | `user_confirmed`（若出现 `locked_by_user`，与此同义，以 `user_confirmed` 为准） |
+| `rights_status` | `rights_status` |
+
+`scores`、`status` 可作为实施扩展保留。
+
+### 6.7 Edit Decision
 
 表达剪辑意图，而不是直接操纵媒体文件：
 - 镜头顺序。
@@ -216,7 +227,7 @@ flowchart LR
 - 画面比例与安全区。
 - 约束与版本。
 
-### 6.7 Timeline IR
+### 6.8 Timeline IR
 
 Timeline IR 是确定性媒体执行的输入，包含轨道、片段、时间位置、源媒体区间、转场、音频、字幕、效果参数和依赖关系。必须有 Schema 版本与校验器。
 
@@ -229,8 +240,8 @@ flowchart TB
   TB --> CP[Creative Planning]
   CP --> CB[Creative Brief]
   CB --> SB[Storyboard]
-  SB --> MR[Material Requirements]
-  MR --> RR[Search Planner / Recommendation Strategy]
+  SB --> SP[ShotPlan（内嵌 Material Requirements）]
+  SP --> RR[Search Planner / Recommendation Strategy]
   RR --> RS[URRE Search / Recommendation Service]
   RS --> CS[Candidate Set + Evidence]
   CS --> MC[Material Curation]
@@ -358,7 +369,7 @@ Artifact 之间建立父子 lineage。用户修改某个镜头时，只使依赖
 - **对话区：** 描述需求、追问、调整和确认。
 - **任务区：** 展示目标、当前阶段、执行进度和待处理事项。
 - **素材区：** 展示检索结果、主动推荐、候选比较和已选素材。
-- **创作区：** 展示 Creative Brief、Storyboard、Shot Plan、Material Assignment 和 Timeline。
+- **创作区：** 展示 Creative Brief、Storyboard、ShotPlan（内嵌 Material Requirements）、Material Assignment 和 Timeline。
 - **预览区：** 展示阶段视频、最终视频、质量问题和 Rights 状态。
 
 用户不需要参与每个内部步骤，但以下高影响节点应保留明确控制权：

@@ -91,7 +91,7 @@ stateDiagram-v2
   Planned --> AwaitingApproval
   AwaitingApproval --> Running: approved
   AwaitingApproval --> Cancelled: rejected
-  Running --> Waiting: user / external input
+  Running --> Waiting: budget_exhausted / awaiting_user / awaiting_external
   Waiting --> Running: resume
   Running --> Reviewing
   Reviewing --> Completed: passed
@@ -103,7 +103,13 @@ stateDiagram-v2
   Cancelled --> [*]
 ```
 
-Task 还应记录 owner、tenant、domain、parent_task、current_step、deadline、cancel_reason 和状态版本。
+本图是 Task 的唯一正式状态集。**不设独立 `Paused` 或 `WAITING_USER`。** `Waiting` 必须带原因，取值至少包括：
+
+- `budget_exhausted`：预算耗尽，等待扩额、降级或停机决策后恢复或取消；
+- `awaiting_user`：等待用户确认、补充或审批；
+- `awaiting_external`：等待外部系统或人工台回执。
+
+Task 还应记录 owner、tenant、domain、parent_task、current_step、deadline、cancel_reason、`waiting_reason`（若处于 `Waiting`）和状态版本。
 
 ### 4.3 Checkpoint
 
@@ -342,7 +348,7 @@ Budget Manager 为任务预留和记录：
 - 视频理解、生成和渲染。
 - 子 Agent 与并行任务成本。
 
-支持预算预估、调用账本、动态限额、熔断、停机和成本归因。任务中途预算耗尽时应进入 Waiting/Paused，而不是无限继续。
+支持预算预估、调用账本、动态限额、熔断、停机和成本归因。任务中途预算耗尽时应进入 `Waiting`（`budget_exhausted`），而不是无限继续，也不进入独立的 `Paused` 状态。
 
 ## 11. 可观测性与审计
 

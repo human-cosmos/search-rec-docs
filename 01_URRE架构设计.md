@@ -38,6 +38,8 @@ URRE（Universal Retrieval & Recommendation Engine）面向视频、商品、广
 
 ![通用检索推荐系统能力全景](images/通用检索推荐系统架构图.png)
 
+上图可继续引用，但须按正文理解：Similarity / Explore 与 Search、Recommendation 并列；Rights 硬过滤先于排序。若与图不符，以本节 mermaid 为准。
+
 ```mermaid
 flowchart TB
   CLIENT[业务应用 / Agent / Domain Pack] --> API[统一 API Gateway]
@@ -62,7 +64,7 @@ flowchart TB
   EVAL --> DOMAIN
 ```
 
-逻辑模块不要求物理服务一一对应。高频请求链路应尽量短，离线训练、索引构建和复杂内容理解不进入在线请求关键路径。
+逻辑模块不要求物理服务一一对应。高频请求链路应尽量短，离线训练、索引构建和复杂内容理解不进入在线请求关键路径。四类能力在路由后并列进入同一类流水线，但过滤层中的 Rights / 权限硬约束必须在排序与重排之前生效。
 
 ## 4. 四类一等业务能力
 
@@ -212,7 +214,7 @@ Domain Pack 应向 URRE 注册：
   "items": [
     {
       "entity_id": "string",
-      "entity_type": "video_segment",
+      "entity_type": "segment",
       "score": 0.0,
       "rank": 1,
       "recall_channels": ["semantic", "visual"],
@@ -235,7 +237,7 @@ Domain Pack 应向 URRE 注册：
 }
 ```
 
-该结构是概念契约，具体字段由 API 详细设计进一步规范。不得向无权限用户暴露源文件真实地址或敏感证据。
+该结构是概念契约，具体字段由 API 详细设计进一步规范。`entity_type` 与 `03` 对象层级对齐，枚举为 `video` / `shot` / `segment`，字段级权威见 `implementation/01`。不得向无权限用户暴露源文件真实地址或敏感证据。
 
 ---
 
@@ -319,7 +321,7 @@ Agent 可以发起受控的“新增素材入库”业务任务，但实际接�
 
 ## 12. URRE 2.0 的验收标准
 
-1. Search、Recommendation、Similarity、Explore 具备独立语义与接口。
+1. Search、Recommendation、Similarity、Explore 四类能力必须语义独立、接口可分；其中 Explore 的上线阶段见 `00` §10 与 `implementation/03` 的对照表，不与 MVP 强制退出项混写。
 2. 同一领域可注册不同 Search 与 Recommendation 策略。
 3. 领域硬约束和权限过滤在排序前生效。
 4. 返回结果可追溯到策略、模型、召回通道和证据。

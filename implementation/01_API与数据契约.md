@@ -1,8 +1,8 @@
 # API 与数据契约
 
 > **文档层级：** 实施规范  
-> **上位文档：** [00 平台总体架构](../00_检索推荐与Agent平台_架构设计2.0.md)  
-> **领域契约：** [03 Video Domain Pack 与创作执行](../03_Video_Domain_Pack与创作执行_架构设计2.0.md)  
+> **上位文档：** [00 平台总体架构](../00_架构设计总纲.md)  
+> **领域契约：** [03 Video Domain Pack 与创作执行](../03_VideoDomain架构设计.md)  
 > **状态：** 概念契约，研发启动时以 OpenAPI、JSON Schema 和代码定义为准
 
 ## 1. 契约原则
@@ -40,6 +40,12 @@ public interface DomainProvider {
 
     List<AgentSkillDescriptor> getSkills();
 
+    List<FilterPolicy> getFilters();
+
+    RightsPolicy getRightsPolicy();
+
+    List<BusinessRule> getBusinessRules();
+
     EvaluationStrategy getEvaluationStrategy();
 }
 
@@ -58,6 +64,7 @@ public record DomainPackDescriptor(
 - `getDescriptor()` 必须声明领域包版本、依赖和平台兼容范围，以支持升级、回滚与依赖检查。
 - 同一个 `domainId` 只能存在一个有效 Provider；重复注册、版本冲突或兼容性校验失败时必须拒绝启动该领域包，不影响其他领域。
 - Provider 返回的定义应为不可变描述；运行时不得通过修改 Provider 返回值静默改变已审核的策略或 Schema。
+- 下列能力**必须注册，但允许先以空实现或显式“后补”占位通过注册校验**：Filter、Rights、Business Rules、Evaluation。不得只把 Rights 做成排序特征或可选重排因子。组成清单仍以 `00` §3 为准；上述 Java 类型名称在研发启动时以正式 SPI 模块为准。
 
 `DomainProvider` 的具体 Java 类型、SPI 加载方式和包名在研发启动时以正式的 SPI 模块、JSON Schema 和集成测试为准。
 
@@ -140,7 +147,6 @@ SearchPlan 必须经过 Schema 校验。租户、Rights 和可见范围等硬约
   "domain": "video",
   "scene": "task_material_recommendation",
   "context": {
-    "user_id": "user_123",
     "session_id": "session_789",
     "project_id": "project_456",
     "task_id": "task_123",
@@ -159,7 +165,7 @@ SearchPlan 必须经过 Schema 校验。租户、Rights 和可见范围等硬约
 }
 ```
 
-`RecommendationStrategy` 由 Domain Pack / 服务端策略注册表选择，负责确定推荐场景、目标和约束。客户端只能请求授权范围内的策略 ID；实际候选召回、排序和重排由 URRE Recommendation Service 执行。`session_id` 只用于交互连续性，Project、Task 和 Artifact 仍是业务权威状态。
+`RecommendationStrategy` 由 Domain Pack / 服务端策略注册表选择，负责确定推荐场景、目标和约束。客户端只能请求授权范围内的策略 ID；实际候选召回、排序和重排由 URRE Recommendation Service 执行。租户、用户身份由服务端可信上下文注入，请求体不得携带或覆盖 `user_id`。`session_id` 只用于交互连续性，Project、Task 和 Artifact 仍是业务权威状态。
 
 ### 2.3 Explore 请求
 
@@ -236,11 +242,11 @@ SearchPlan 必须经过 Schema 校验。租户、Rights 和可见范围等硬约
 | `PATCH` | `/api/v1/video/projects/{projectId}` | 修改项目目标或约束 |
 | `POST` | `/api/v1/video/projects/{projectId}/tasks` | 创建创作任务 |
 | `GET` | `/api/v1/video/tasks/{taskId}` | 查询任务状态 |
-| `POST` | `/api/v1/video/tasks/{taskId}/pause` | 暂停任务 |
-| `POST` | `/api/v1/video/tasks/{taskId}/resume` | 恢复任务 |
+| `POST` | `/api/v1/video/tasks/{taskId}/wait` | 使任务进入 `Waiting`，请求必须带 `waiting_reason` |
+| `POST` | `/api/v1/video/tasks/{taskId}/resume` | 从 `Waiting` 恢复任务 |
 | `POST` | `/api/v1/video/tasks/{taskId}/cancel` | 取消任务 |
 
-任务状态以 [02 Agent Runtime 与任务治理](../02_Agent_Runtime与任务治理_架构设计2.0.md) 的定义为准。API 只返回状态、当前步骤、待处理事项、Artifact 引用和可执行操作，不返回模型内部推理链。
+任务状态以 [02 Agent Runtime 与任务治理](../02_AgentRuntime架构设计.md) §4.2 为唯一权威，状态集为 `Created`、`Planned`、`AwaitingApproval`、`Running`、`Waiting`、`Reviewing`、`Completed`、`Failed`、`Cancelled`。不设独立 `Paused` 或 `WAITING_USER`。`Waiting` 必须带原因：`budget_exhausted` / `awaiting_user` / `awaiting_external`。历史上若使用 `/pause`，应映射为进入 `Waiting` 而不是新状态。API 只返回状态、当前步骤、待处理事项、Artifact 引用和可执行操作，不返回模型内部推理链。
 
 ### 3.2 创作产物
 
@@ -332,7 +338,7 @@ public record SearchVideoResult(
 
 ### 5.1 实体引用
 
-Video、Shot、Segment 的权威定义见 [Video Domain Pack](../03_Video_Domain_Pack与创作执行_架构设计2.0.md)。跨 API 引用时至少包含：
+Video、Shot、Segment 的权威定义见 [Video Domain Pack](../03_VideoDomain架构设计.md)。跨 API 引用时至少包含：
 
 ```json
 {
@@ -367,29 +373,34 @@ Video 元数据至少按以下类别维护：
   "project_id": "project_001",
   "storyboard_version": 3,
   "shot_plan_id": "shotplan_002",
+  "storyboard_shot_id": "sb_shot_014",
   "entity_ref": {
     "entity_type": "segment",
     "entity_id": "segment_009",
     "source_video_id": "video_100",
-    "start_ms": 12500,
-    "end_ms": 18800
+    "selected_time_range": {"start_ms": 12500, "end_ms": 18800}
   },
+  "match_evidence": {
+    "summary": "近景机械臂抓取，时长满足镜头目标",
+    "evidence_refs": ["frame_012500"]
+  },
+  "alternatives": [
+    {"entity_type": "segment", "entity_id": "segment_011"}
+  ],
+  "selection_reason": "画面包含机械臂精准抓取动作，近景构图符合该镜头需求",
+  "user_confirmed": false,
+  "rights_status": "verified",
   "scores": {
     "semantic_fit": 0.91,
     "visual_fit": 0.88,
     "technical_quality": 0.93,
     "task_fit": 0.90
   },
-  "reasons": [
-    "画面包含机械臂精准抓取动作",
-    "近景构图符合该镜头需求",
-    "片段长度满足目标时长"
-  ],
-  "rights_status": "verified",
-  "status": "proposed",
-  "locked_by_user": false
+  "status": "proposed"
 }
 ```
+
+Material Assignment 字段级以此为准，概念关系见 `03` §6。最小字段集：`shot_plan_id`（必填）、`storyboard_shot_id`（必填）、`entity_ref`（含 `entity_type`、id、`selected_time_range`）、`match_evidence`、`alternatives`、`selection_reason`、`user_confirmed`、`rights_status`。`scores`、`status` 为实施扩展。不再使用 `locked_by_user`；若历史数据出现该字段，与 `user_confirmed` 同义，以 `user_confirmed` 为准。`entity_type` 枚举为 `video` / `shot` / `segment`。与 `03` §6.5 旧称的对照见 `03` 本节表格。不把 `04` 中的 `Asset` / `Clip` / `AgentRun` 作为实施契约。
 
 ### 5.3 EditDecision
 
