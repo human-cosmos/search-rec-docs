@@ -151,7 +151,17 @@ SearchPlan 必须经过 Schema 校验。租户、Rights 和可见范围等硬约
     "project_id": "project_456",
     "task_id": "task_123",
     "current_stage": "material_collection",
-    "task_description": "制作一条城市夜生活品牌短片"
+    "task_description": "制作一条城市夜生活品牌短片",
+    "task_context": {
+      "covered_shot_ids": ["shot_001", "shot_002"],
+      "selected_entity_refs": [
+        {"shot_id": "shot_001", "entity_id": "segment_001"}
+      ],
+      "diversity_targets": {
+        "avoid_same_segment": true,
+        "max_per_visual_cluster": 3
+      }
+    }
   },
   "strategy": {
     "strategy_id": "video_project_recommend_v1",
@@ -165,7 +175,7 @@ SearchPlan 必须经过 Schema 校验。租户、Rights 和可见范围等硬约
 }
 ```
 
-`RecommendationStrategy` 由 Domain Pack / 服务端策略注册表选择，负责确定推荐场景、目标和约束。客户端只能请求授权范围内的策略 ID；实际候选召回、排序和重排由 URRE Recommendation Service 执行。租户、用户身份由服务端可信上下文注入，请求体不得携带或覆盖 `user_id`。`session_id` 只用于交互连续性，Project、Task 和 Artifact 仍是业务权威状态。
+`RecommendationStrategy` 由 Domain Pack / 服务端策略注册表选择，负责确定推荐场景、目标和约束。客户端只能请求授权范围内的策略 ID；实际候选召回、排序和重排由 URRE Recommendation Service 执行。租户、用户身份由服务端可信上下文注入，请求体不得携带或覆盖 `user_id`。`session_id` 只用于交互连续性，Project、Task 和 Artifact 仍是业务权威状态。项目型推荐必须携带结构化 `task_context`；`task_description` 只能作为摘要，不能替代已覆盖 Shot、已选素材和多样性约束。
 
 ### 2.3 Explore 请求
 
@@ -286,7 +296,6 @@ Tool 只暴露语义能力，不暴露底层客户端。
 | `rerank_candidates` | CandidateSet ref + authorized ranking policy | CandidateSet | L0 只读 |
 | `explain_retrieval_result` | request_id / result ref + explanation scope | ExplanationReport | L0 只读 |
 | `get_profile_summary` | user / context ref + purpose | ProfileSummary | L0 只读，敏感 |
-| `record_feedback_event` | FeedbackEventRequest + source + confirmation ref | FeedbackReceipt | L1 事件写入 |
 | `get_project_context` | project_id | ProjectContext | L0 只读 |
 | `get_artifact` | artifact_id | Artifact | L0 只读 |
 | `create_artifact` | type + schema + content | ArtifactRef | L1 写草稿 |
@@ -309,8 +318,8 @@ Tool 只暴露语义能力，不暴露底层客户端。
 - `rerank_candidates` 只能重排调用方已经获得的候选集，不能扩大候选范围、恢复已被硬约束过滤的候选或更换未注册的排序模型。
 - `explain_retrieval_result` 只能解释已有请求、候选、召回通道和证据；结果必须区分事实、模型判断与未知项。
 - `get_profile_summary` 必须声明调用目的，只返回完成当前任务所需的最小字段，并受租户、用户和数据范围权限约束；不得暴露原始行为序列、敏感属性或完整画像。
-- `record_feedback_event` 只记录真实 UI 行为或用户明确确认的结果，必须携带 `source`、`occurred_at` 和幂等键；Agent 不得根据自身判断伪造点击、采用、下载或转化事件。
 - 通用 Toolkit 名称与领域 Tool 可以不同，但领域 Tool 必须映射到对应的 URRE 或领域基础服务，并遵守相同的 Policy Gateway 规则。
+- Agent 默认不拥有高价值反馈写入 Tool。曝光与点击等 UI 遥测由前端/Event Service 记录；`material.assigned`、`material.timeline_adopted`、`material.final_kept` 和导出转化由业务 Service 在状态迁移成功后通过 Outbox 发出。
 
 示例：
 
@@ -422,8 +431,9 @@ Material Assignment 字段级以此为准，概念关系见 `03` §6。最小字
       "source_segment_id": "segment_009",
       "source_in_ms": 12500,
       "source_out_ms": 18800,
-      "timeline_start_ms": 0,
-      "track": "V1",
+      "sequence_order": 1,
+      "duration_target_ms": 6300,
+      "position_intent": null,
       "speed": 1.0,
       "transition_in": null,
       "transition_out": {"type": "cut"}
@@ -433,6 +443,8 @@ Material Assignment 字段级以此为准，概念关系见 `03` §6。最小字
   "text_overlays": []
 }
 ```
+
+EditDecision 表达顺序、入出点和编辑意图。绝对 `timeline_start_ms`、最终轨道分配和帧级落位由 Timeline Resolver 生成到 Timeline IR，不在 EditDecision 中提前固化。
 
 ### 5.4 Artifact
 

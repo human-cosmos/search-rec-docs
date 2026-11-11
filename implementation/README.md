@@ -11,6 +11,9 @@
 | [01 API 与数据契约](01_API与数据契约.md) | URRE、视频项目、创作产物、Tool、事件、错误和幂等契约 |
 | [02 技术选型与服务部署](02_技术选型与服务部署.md) | 技术栈、Java/Python 边界、服务部署、工程结构和非功能要求 |
 | [03 实施路线图与验收基线](03_实施路线图与验收基线.md) | 阶段计划、MVP、启动清单、工作包、测试、指标、风险和 ADR |
+| [04 Video Domain Agent 详细设计与实施手册](04_VideoDomainAgent_详细设计与实施手册.md) | 参考项目到目标架构的映射、Agent/Workflow、检索推荐、创作 IR、时间线、质量、恢复和阶段计划 |
+| [05 工程契约与研发 Backlog](05_VideoDomainAgent_工程契约与研发Backlog.md) | 模块依赖、API/JSON Schema、数据库 DDL、Tool 治理、40 个研发 Ticket 和完成标准 |
+| [06 纵向切片与验收脚本](06_VideoDomainAgent_纵向切片与验收脚本.md) | 固定样本、端到端 API 演练、故障注入、证据包和阻断验收项 |
 
 ## 使用顺序
 
@@ -18,6 +21,7 @@
 2. 研发接口前阅读 [01 API 与数据契约](01_API与数据契约.md)。
 3. 完成技术验证和部署设计时阅读 [02 技术选型与服务部署](02_技术选型与服务部署.md)。
 4. 制定项目计划、Backlog 和验收标准时阅读 [03 实施路线图与验收基线](03_实施路线图与验收基线.md)。
+5. 启动 Video Domain Agent 研发时，以 [04 详细设计](04_VideoDomainAgent_详细设计与实施手册.md) 为总体基线，按 [05 工程契约](05_VideoDomainAgent_工程契约与研发Backlog.md) 拆任务，按 [06 验收脚本](06_VideoDomainAgent_纵向切片与验收脚本.md) 联调。
 
 ## 维护原则
 
