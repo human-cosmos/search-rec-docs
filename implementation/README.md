@@ -1,32 +1,35 @@
 # 实施材料
 
-本目录承载 2.0 的 API、数据契约、技术选型、服务部署、研发路线图、工作包和验收基线。
+本目录只承载通用 Video Domain Agent 的实施契约。交付范围与 `Video -> Clip` 模型以 [00 交付范围与 Video/Clip 模型基线](00_交付范围与VideoClip模型.md)为准。
 
-架构结论以 `00`–`03` 为准；实施文档负责把架构落到可研发、可部署、可测试的契约。开源调研附录见 [04 开源项目源码解析与设计指南](../04_开源项目源码解析与设计指南.md)；该文件是调研附录，不是第二套主文，与 `00`–`03` 或本目录冲突时以后者为准。不再依赖已退役的 1.0 目录。
+本次不交付真实检索推荐、数据加工、索引、媒体渲染、视频版权或许可过滤、前端、广告跟品、商品或投放能力。检索推荐通过稳定 Mock Adapter 提供，上层必须使用与未来真实 Adapter 相同的 Port 和 Schema。
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
-| [01 API 与数据契约](01_API与数据契约.md) | URRE、视频项目、创作产物、Tool、事件、错误和幂等契约 |
-| [02 技术选型与服务部署](02_技术选型与服务部署.md) | 技术栈、Java/Python 边界、服务部署、工程结构和非功能要求 |
-| [03 实施路线图与验收基线](03_实施路线图与验收基线.md) | 阶段计划、MVP、启动清单、工作包、测试、指标、风险和 ADR |
-| [04 Video Domain Agent 详细设计与实施手册](04_VideoDomainAgent_详细设计与实施手册.md) | 参考项目到目标架构的映射、Agent/Workflow、检索推荐、创作 IR、时间线、质量、恢复和阶段计划 |
-| [05 工程契约与研发 Backlog](05_VideoDomainAgent_工程契约与研发Backlog.md) | 模块依赖、API/JSON Schema、数据库 DDL、Tool 治理、40 个研发 Ticket 和完成标准 |
-| [06 纵向切片与验收脚本](06_VideoDomainAgent_纵向切片与验收脚本.md) | 固定样本、端到端 API 演练、故障注入、证据包和阻断验收项 |
+| [00 交付范围与 Video/Clip 模型](00_交付范围与VideoClip模型.md) | 最终范围、对象层级、旧概念映射和 Mock 约束 |
+| [01 API 与数据契约](01_API与数据契约.md) | Video、Clip、Search、Recommendation、任务和 Tool 契约 |
+| [02 技术选型与服务部署](02_技术选型与服务部署.md) | 本次最小技术栈、Mock 服务和测试部署 |
+| [03 实施路线图与验收基线](03_实施路线图与验收基线.md) | 阶段计划、工作包、指标和交付顺序 |
+| [04 Video Domain Agent 详细设计与实施手册](04_VideoDomainAgent_详细设计与实施手册.md) | Agent、Workflow、ClipPlan、Assignment、恢复和评测 |
+| [05 工程契约与研发 Backlog](05_VideoDomainAgent_工程契约与研发Backlog.md) | 模块、Port、Schema、DDL、Ticket 和完成标准 |
+| [06 纵向切片与验收脚本](06_VideoDomainAgent_纵向切片与验收脚本.md) | 固定 Video/Clip Mock、端到端演练和故障注入 |
 
 ## 使用顺序
 
-1. 先阅读 [平台总体架构](../00_架构设计总纲.md) 和对应专项文档（[01 URRE](../01_URRE架构设计.md)、[02 Agent Runtime](../02_AgentRuntime架构设计.md)、[03 Video Domain](../03_VideoDomain架构设计.md)）。
-2. 研发接口前阅读 [01 API 与数据契约](01_API与数据契约.md)。
-3. 完成技术验证和部署设计时阅读 [02 技术选型与服务部署](02_技术选型与服务部署.md)。
-4. 制定项目计划、Backlog 和验收标准时阅读 [03 实施路线图与验收基线](03_实施路线图与验收基线.md)。
-5. 启动 Video Domain Agent 研发时，以 [04 详细设计](04_VideoDomainAgent_详细设计与实施手册.md) 为总体基线，按 [05 工程契约](05_VideoDomainAgent_工程契约与研发Backlog.md) 拆任务，按 [06 验收脚本](06_VideoDomainAgent_纵向切片与验收脚本.md) 联调。
+1. 阅读 [交付范围与模型基线](00_交付范围与VideoClip模型.md)。
+2. 阅读 [Video Domain 架构](../03_VideoDomain架构设计.md)和 [详细设计](04_VideoDomainAgent_详细设计与实施手册.md)。
+3. 按 [API 契约](01_API与数据契约.md)和 [工程契约](05_VideoDomainAgent_工程契约与研发Backlog.md)编码。
+4. 按 [实施路线图](03_实施路线图与验收基线.md)排期。
+5. 使用 [验收脚本](06_VideoDomainAgent_纵向切片与验收脚本.md)完成 Mock 端到端验收。
+
+Runtime 接入参考 [runtime-sdk Java 文档](../runtime-sdk/java/overview.md)与 [java-examples](../java-examples/README.md)。Runtime SDK 制品和目标环境仍需在开发环境单独验收。
 
 ## 维护原则
 
-- 存在两套决策编号空间：架构决策使用 `00` §9 的 `ADR-01`–`ADR-12`；实施决策使用 `03_实施路线图与验收基线.md` §9 的 `IMPL-ADR-01`–`IMPL-ADR-12`。引用时必须写明所属空间，禁止两套都从 ADR-01 计数。
-- 架构决策变更先更新 `00` ADR 和 `00`–`03`，再同步实施契约与对应的 `IMPL-ADR`。
-- API 字段、事件和 Schema 应有机器可校验的 OpenAPI/JSON Schema 对应物。
-- 技术组件版本必须由 PoC 和 ADR 固定，不在架构文档中提前承诺。
-- 阶段时长是建议值，不能替代团队容量、数据准备和外部依赖评估。
+- 新设计不得重新引入 Shot、Segment 或第三层视频对象。
+- Mock 与真实 Adapter 共用 Port、Schema、事件和错误码。
+- Agent 只使用注册 Tool，不直接访问 Mock 数据、数据库或文件系统。
+- 机器契约以 OpenAPI、JSON Schema、DDL 迁移和契约测试为准。
+- 不在本次范围增加商品、投放、媒体渲染、真实索引或前端依赖。

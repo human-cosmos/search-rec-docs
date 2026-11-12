@@ -1,23 +1,21 @@
-# 检索推荐与 Agent 平台：2.0 架构文档
+# 通用 Video Domain Agent：设计与实施文档
 
-本目录是 2.0 架构文档的阅读入口。权威顺序如下；冲突时按此顺序取用，不得把后位文档当作开工依据去覆盖前位结论。
+本目录当前只服务一个交付目标：实现通用 Video Domain Agent。产品工作台、广告跟品、商品与投放、真实数据加工、真实检索推荐、媒体渲染、视频版权或许可过滤、前端和跨领域能力均不属于本次交付。
+
+视频领域模型冻结为 `Video -> Clip` 两级。PRD 中的“片段”和“切片”统一为 Clip；不再保留 Shot、Segment、ShotPlan 或 ShotRequirement。
 
 ## 权威顺序
 
-1. [`00_架构设计总纲.md`](00_架构设计总纲.md)：已冻结原则、边界、能力里程碑 A–D、架构 ADR（`ADR-01`–`ADR-12`）。
-2. [`01_URRE架构设计.md`](01_URRE架构设计.md)、[`02_AgentRuntime架构设计.md`](02_AgentRuntime架构设计.md)、[`03_VideoDomain架构设计.md`](03_VideoDomain架构设计.md)：专项架构。Task 状态机以 `02` §4.2 为准。
-3. [`implementation/01_API与数据契约.md`](implementation/01_API与数据契约.md)：字段级契约。
-4. [`implementation/02_技术选型与服务部署.md`](implementation/02_技术选型与服务部署.md)、[`implementation/03_实施路线图与验收基线.md`](implementation/03_实施路线图与验收基线.md)：选型、工程阶段 0–5、实施决策（`IMPL-ADR-01`–`IMPL-ADR-12`）。
-5. [`04_开源项目源码解析与设计指南.md`](04_开源项目源码解析与设计指南.md)：**仅调研附录**，不是目标架构、阶段计划、API 或技术选型权威。
+1. [`implementation/00_交付范围与VideoClip模型.md`](implementation/00_交付范围与VideoClip模型.md)：最终交付范围、Video/Clip 模型和 Mock-first 约束。
+2. [`03_VideoDomain架构设计.md`](03_VideoDomain架构设计.md)：Video Domain 架构。
+3. [`implementation/04_VideoDomainAgent_详细设计与实施手册.md`](implementation/04_VideoDomainAgent_详细设计与实施手册.md)：Agent、Workflow、工具和状态设计。
+4. [`implementation/01_API与数据契约.md`](implementation/01_API与数据契约.md)、[`implementation/05_VideoDomainAgent_工程契约与研发Backlog.md`](implementation/05_VideoDomainAgent_工程契约与研发Backlog.md)：API、Schema、DDL、Port、Backlog。
+5. [`implementation/02_技术选型与服务部署.md`](implementation/02_技术选型与服务部署.md)、[`implementation/03_实施路线图与验收基线.md`](implementation/03_实施路线图与验收基线.md)：本次技术基线和路线图。
+6. [`implementation/06_VideoDomainAgent_纵向切片与验收脚本.md`](implementation/06_VideoDomainAgent_纵向切片与验收脚本.md)：Mock 数据的端到端验收。
+7. [`04_开源项目源码解析与设计指南.md`](04_开源项目源码解析与设计指南.md)：仅调研附录，不是交付契约。
 
-实施材料的目录说明见 [`implementation/README.md`](implementation/README.md)。
+[`00_架构设计总纲.md`](00_架构设计总纲.md)、[`01_URRE架构设计.md`](01_URRE架构设计.md) 和 [`02_AgentRuntime架构设计.md`](02_AgentRuntime架构设计.md) 提供平台原则和 Runtime 边界。它们描述的其他领域及生产基础设施不进入本次交付。
 
-## 图的身份
+## 图的使用
 
-| 图 | 身份 |
-|---|---|
-| `00` / `01` / `02` / `03` 中被正文引用的 mermaid（含 `00` §1.1 总图） | 正式逻辑图 |
-| [`images/通用检索推荐系统架构图.png`](images/通用检索推荐系统架构图.png) | 可继续被 `01` 引用，但须加注：Similarity / Explore 与 Search、Recommendation 并列；Rights 硬过滤先于排序。若与注不符，以正文 mermaid 为准 |
-| [`images/整体架构图.png`](images/整体架构图.png)、[`images/视频检索推荐 Agent 架构图.png`](images/视频检索推荐%20Agent%20架构图.png) | **不作开工总图**。与正文冲突，不得读成「所有请求经 Runtime 才能到 URRE」或「以 Agent 为核心」。待重绘前禁止当作平台目标架构 |
-| [`images/推荐链路.png`](images/推荐链路.png)、[`images/动态任务路由.png`](images/动态任务路由.png)、[`images/人工确认与生产闭环.png`](images/人工确认与生产闭环.png) | 调研/流程示意；若引用须标明非本平台目标架构，建议由 `04` 引用 |
-| [`images/shared-chat/`](images/shared-chat/) | 仅服务 `04` 调研叙述 |
+Markdown 正文中的 Mermaid 图是当前实施依据。`images/` 中的产品原型、共享聊天截图和旧平台图仅作调研材料，不作为 Video/Clip 模型、API 或验收依据。
