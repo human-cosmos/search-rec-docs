@@ -36,9 +36,9 @@ URRE（Universal Retrieval & Recommendation Engine）面向视频、商品、广
 
 ## 3. 总体架构
 
-![通用检索推荐系统能力全景](images/通用检索推荐系统架构图.png)
+![](C:\Users\Administrator\Desktop\search-rec-docs\images\URRE 与 Agent Runtime 统一架构图.png)
 
-上图可继续引用，但须按正文理解：Similarity / Explore 与 Search、Recommendation 并列；Rights 硬过滤先于排序。若与图不符，以本节 mermaid 为准。
+Similarity / Explore 与 Search、Recommendation 并列；Rights 硬过滤先于排序。
 
 ```mermaid
 flowchart TB
@@ -323,6 +323,8 @@ Adoption@K、NDCG@K、覆盖度、多样性、新颖性、重复率、任务完�
 ---
 
 ## 10. 原材料加工与索引平面
+
+![](C:\Users\Administrator\Desktop\search-rec-docs\images\原材料智能处理与检索全链路流程.png)
 
 ### 10.1 定位与事实源
 
