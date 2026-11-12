@@ -1730,7 +1730,7 @@ make compose-up
 | ID | Ticket | 交付 | 依赖 | Definition of Done |
 |---|---|---|---|---|
 | VDA-009 | Video/Shot/Segment 数据模型 | 数据表与 Schema | 004,008 | 时间区间与层级引用测试通过 |
-| VDA-010 | 批量入库与内容加工 | Ingest/Content Worker、IngestionJob | 008,009 | 固定样本可重复生成 Shot 和加工产物；内容/元数据/Rights 版本与幂等键测试通过 |
+| VDA-010 | 批量入库与内容加工 | Ingest/Content Worker、IngestionJob、Input Artifact 校验 | 008,009 | 固定样本可重复生成 Shot 和加工产物；上游 Canonical Snapshot / Input Artifact 可校验复用，权威业务字段不可被派生结果覆盖；内容/元数据/Rights 版本与幂等键测试通过 |
 | VDA-011 | BM25 索引与元数据过滤 | ES Index Writer、Index Manifest | 010 | Active Manifest 为唯一发布指针；单侧失败不发布，Active 指针回滚通过 |
 | VDA-012 | Qdrant 文本向量与 RRF | Embedding/Indexing Worker、Hybrid Search | 010,011 | Point 带模型、Rights 与索引版本；仅 Rights 更新不重跑 Embedding |
 | VDA-013 | CandidateSet API | SearchResult Contract | 012 | 证据引用、Rights、版本完整；Evidence Resolver 权限测试通过 |

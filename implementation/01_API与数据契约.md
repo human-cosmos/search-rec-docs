@@ -14,6 +14,7 @@
 5. 所有结果返回策略版本、证据和可追溯标识。
 6. 对外事件返回阶段状态和简短决策摘要，不暴露内部推理链、敏感 Prompt 或凭据。
 7. 契约变更必须兼容版本管理；破坏性变更使用新版本，不静默改变字段语义。
+8. 上游业务服务拥有业务事实与 Canonicalization；数据加工平面只消费带版本的权威快照并生成可重建的 Search Projection；URRE 核心只负责召回、过滤和排序。
 
 ### 1.1 Domain Pack SPI 契约
 
@@ -46,6 +47,8 @@ public interface DomainProvider {
 
     List<BusinessRule> getBusinessRules();
 
+    List<ProcessingProfileDescriptor> getProcessingProfiles();
+
     EvaluationStrategy getEvaluationStrategy();
 }
 
@@ -60,6 +63,7 @@ public record DomainPackDescriptor(
 
 - `getSchema()` 返回的 Schema 必须通过注册时的兼容性与版本校验。
 - 召回、排序、重排和评估只能返回已注册、已审核的策略或模型 ID；不得接受请求方动态传入的代码、表达式或查询 DSL。
+- `getProcessingProfiles()` 声明领域需要的 Search Projection / Understanding 步骤、上游输入 Artifact 契约及已发布版本。Profile 定义属于 Domain Pack，实际 Job 执行和产物持久化属于数据加工平面。
 - `getTools()` 与 `getSkills()` 只声明语义能力及其输入输出契约，实际执行仍经过 Tool Registry 和 Policy Gateway。
 - `getDescriptor()` 必须声明领域包版本、依赖和平台兼容范围，以支持升级、回滚与依赖检查。
 - 同一个 `domainId` 只能存在一个有效 Provider；重复注册、版本冲突或兼容性校验失败时必须拒绝启动该领域包，不影响其他领域。
@@ -303,13 +307,24 @@ SearchPlan 必须经过 Schema 校验。租户、Rights 和可见范围等硬约
 ```json
 {
   "domain": "video",
+  "canonical_snapshot_id": "video_asset_snapshot_20261112_001",
   "source_refs": ["objref_001", "objref_002"],
+  "input_artifact_refs": [
+    {
+      "artifact_type": "shot_segments",
+      "artifact_ref": "artifact_shot_001",
+      "schema_version": "shot_segments_v1",
+      "content_hash": "sha256:..."
+    }
+  ],
   "processing_profile_version": "video_default_v1",
   "embedding_profile_version": "video_multimodal_v1",
   "index_profile_version": "video_hybrid_v1",
   "index_targets": ["keyword", "text_vector", "visual_vector"]
 }
 ```
+
+`canonical_snapshot_id` 必须引用上游业务服务发布的不可变权威快照。`input_artifact_refs` 用于登记上游已经产出的稳定 Shot、Segment、OCR 或商品结构化特征；数据加工平面必须校验 artifact 类型、Schema 版本、权限、来源和 hash，校验通过后直接复用。缺少可用产物或检索侧需要不同表示时，才按 Processing Profile 生成新的 Search Projection。
 
 `source-uploads/finalize` 必须以服务端登记的预期大小和客户端提供的 SHA-256 校验对象；同一上传会话的重复 finalize 返回相同 `source_ref`，不得创建重复原始对象。
 
@@ -337,6 +352,9 @@ SearchPlan 必须经过 Schema 校验。租户、Rights 和可见范围等硬约
 
 - 租户、用户和数据范围由服务端可信上下文注入，请求体不得覆盖。
 - `processing_profile_version`、`embedding_profile_version` 和 `index_profile_version` 必须是已注册且已发布的版本。
+- `canonical_snapshot_id` 和每个 `input_artifact_refs` 都必须绑定上游可信来源、不可变版本和内容 hash；客户端不能通过引用扩大租户、项目、Rights 或数据范围。
+- 数据加工平面不得修正上游权威业务字段，也不得把 Search Projection 或 Understanding 结果反写为业务事实；字段冲突必须拒绝 Job 并返回可归因错误，由上游发布新快照。
+- Processing Profile 必须声明上游输入 Schema、允许复用的 Input Artifact 类型和本 Profile 生成的 Search Projection 类型。
 - `index_targets` 是当前 Index Profile 声明的枚举子集；`index_profile_version` 固定每个 target 的 Schema 版本。客户端不能传入自由字符串、底层索引名或未注册 Schema。
 - 写入请求必须携带 `Idempotency-Key`。重复提交返回同一 Job，不得重复创建素材或向量。
 - 客户端提交成功只表示任务已受理，不表示内容已可检索；在线可见性以索引校验和发布结果为准。
@@ -653,7 +671,7 @@ IndexManifest 是 ES 与 Qdrant 索引版本的发布清单。控制面只保存
 - `video.analysis.completed`
 - `video.indexed`
 - `data.ingestion.accepted`
-- `data.asset.normalized`
+- `data.search_projection.generated`（替代 `data.asset.normalized`；旧事件名仅用于兼容过渡）
 - `data.analysis.completed`
 - `data.embedding.completed`
 - `data.indexing.completed`

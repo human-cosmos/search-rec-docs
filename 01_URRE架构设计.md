@@ -56,7 +56,8 @@ flowchart TB
   PIPE <--> FEATURE[Feature Service]
   PIPE <--> MODEL[Embedding / Two-Tower / DNN Ranker / Reranker]
   PIPE <--> INDEX[关键词 / 向量 / 视觉 / 属性 / 关系索引]
-  INGEST[对象接入与内容理解] --> DATA[对象主数据与特征]
+  UPSTREAM[上游业务对象 + Canonical Snapshot] --> INGEST[Input 接入 / Search Projection / Understanding]
+  INGEST --> DATA[技术元数据 / Search Projection / 特征]
   DATA --> INDEX
   EVENT[行为事件] --> FEEDBACK[Feedback & Attribution]
   FEEDBACK --> FEATURE
@@ -325,14 +326,14 @@ Adoption@K、NDCG@K、覆盖度、多样性、新颖性、重复率、任务完�
 
 ### 10.1 定位与事实源
 
-原材料加工与索引平面是 URRE 的一等数据生产层，负责把视频、商品、文档和外部内容转换为可检索对象。对象主数据、版本化加工产物和特征是可追溯的事实来源；Elasticsearch、Qdrant 中的全文索引、向量和属性字段是可由加工产物重建的派生数据。
+原材料加工与索引平面是 URRE 的一等数据生产层，负责把视频、商品、文档和外部内容转换为可检索对象。上游领域业务服务拥有权威业务对象和业务元数据；数据加工平面保存不可变输入快照、技术元数据、版本化 Search Projection 和特征，作为可追溯的检索输入与派生事实。Elasticsearch、Qdrant 中的全文索引、向量和属性字段是可由加工产物重建的派生数据。
 
 URRE 在线检索不直接读取原始视频或商品文件。Agent 可以通过受治理 Tool 发起批量入库、重处理或索引重建任务，但不得执行转码、抽帧、内容理解、Embedding 或底层索引写入。
 
 ```mermaid
 flowchart LR
   RAW[原材料 / 外部来源] --> INGEST[Ingest Worker：登记与校验]
-  INGEST --> RAWSTORE[不可变原始对象 + 主数据]
+  INGEST --> RAWSTORE[不可变原件 + 上游对象快照引用]
   RAWSTORE --> PROCESS[Content Processing Worker]
   PROCESS <--> MODEL[Embedding / 视觉 / ASR / OCR 等模型服务]
   PROCESS --> ARTIFACT[版本化加工产物与特征]
@@ -344,14 +345,38 @@ flowchart LR
   ACTIVATE --> URRE[URRE 在线服务]
 ```
 
+#### 10.1.1 业务事实与检索派生的责任边界
+
+数据加工平面不是新的业务事实源，也不替上游定义“对象在业务上是什么”。各层职责如下：
+
+| 层 | 权威职责 | 不承担的职责 |
+|---|---|---|
+| 上游领域业务服务 | 对象身份、权威业务元数据、业务状态、生命周期、Rights 引用、业务来源 | 为每个检索场景重复实现转码、抽帧、分块、Embedding 和索引发布 |
+| 数据加工平面 | 接入检索输入快照、执行 Search Projection / Understanding、保存版本与血缘、构建和发布索引 | 修改上游权威字段，或把派生结果直接提升为业务事实 |
+| Domain Pack | 定义领域 Schema、Canonicalization 约束、处理 Adapter、Processing / Embedding / Index Profile 和验收口径 | 持久化业务事实或执行底层基础设施写入 |
+| URRE 核心服务 | Query / Context、召回、硬过滤、融合、排序、重排和证据组装 | 业务规范化、原始媒体处理、模型任务调度和索引发布 |
+
+责任判断规则：
+
+1. 回答“对象在业务上是什么”的字段和规则归上游。
+2. 回答“为了检索对象需要额外生成什么”的产物归数据加工平面。
+3. 回答“领域需要哪些处理步骤、口径和版本”的定义归 Domain Pack。
+4. 回答“哪些对象应被召回、过滤、排序”的计算归 URRE 核心。
+
+**业务规范化 / Canonicalization** 指商品标题权威修正、SKU 映射、类目映射、业务状态、许可状态和来源认定等上游事实治理。**检索派生 / Search Projection** 指转码、抽帧、镜头切分、文档分块、ASR、OCR、视觉标签、特征和 Embedding 等为检索生成的可重建表示。二者不得继续合并在一个含义模糊的 `Normalize` 阶段中。
+
+上游可以提供稳定、版本化且通过 Schema 校验的 Shot、Segment、OCR 或商品结构化特征。数据加工平面必须把它们登记为带来源、版本和 hash 的 Input Artifact，校验后直接消费；只有缺少可用产物或检索侧需要不同表示时，才生成新的 Search Projection。派生 Artifact 不得在没有上游业务命令的情况下修改权威元数据、Rights 或业务状态。
+
 ### 10.2 处理阶段与职责
 
 | 阶段 | 主要职责 | 产物 | 不应承担 |
 |---|---|---|---|
-| Source Registration | 登记来源、租户、Rights、访问凭据和批处理范围 | `IngestionJob`、原始对象引用 | 内容理解和召回排序 |
-| Ingest / Validate | 下载或挂载、校验 hash、格式、病毒与权限，保存不可变原件 | 原始对象、规范化元数据 | 直接向在线索引写入未加工内容 |
-| Normalize | 转码、抽帧、镜头切分、商品字段清洗、文档分块等领域标准化 | 派生媒体、Shot / Segment、标准字段 | 业务推荐策略和最终排序 |
-| Understand | ASR、OCR、视觉理解、分类、标签、实体和关系抽取 | 版本化分析结果与证据 | 修改原始对象或掩盖来源 |
+| Upstream Snapshot | 上游业务服务提供权威对象、业务元数据、Rights 引用和可选稳定产物 | 版本化业务快照、Input Artifact 引用 | 为检索生成全部派生表示或决定在线排序 |
+| Source Registration | 登记来源、租户、Rights、访问凭据、输入快照和批处理范围 | `IngestionJob`、原始对象引用 | 解释或改写上游业务语义 |
+| Ingest / Validate | 下载或挂载、校验 hash、格式、病毒与权限，保存不可变原件并提取可复现的技术元数据 | 原始对象、技术元数据快照 | 直接向在线索引写入未加工内容或修正业务字段 |
+| Canonicalization Contract | 校验上游权威字段和可选 Input Artifact 的版本、Schema、hash 与权限 | 已接受的业务快照引用 | 在本层静默清洗、映射或修正商品、视频和 Rights 业务字段 |
+| Search Projection | 转码、抽帧、镜头切分、文档分块以及检索侧字段投影 | 派生媒体、Shot / Segment、可重建检索字段 | 修改原始对象、业务事实或最终排序 |
+| Understand | ASR、OCR、视觉理解、分类、标签、实体和关系抽取 | 版本化分析结果与证据 | 修改原始对象、掩盖来源或替代上游业务裁决 |
 | Embed | Content Processing 内的子阶段；按注册模型生成文本、视觉、多模态或商品表示 | 向量、模型版本、归一化参数 | 直接决定最终业务分数；默认不要求独立 Worker |
 | Index Build | 批量生成搜索文档和 Qdrant Point，执行 upsert、回填和校验 | ES 文档、Qdrant Point、索引统计 | 绕过加工产物临时拼接字段 |
 | Publish | 校验后切换 Active Manifest 指针，在线别名仅作为 Manifest 内部资源 | 可回滚的 index version | 在未校验时覆盖当前在线索引 |
@@ -361,10 +386,17 @@ flowchart LR
 领域通过 `ProcessingProfile` 和 Adapter 扩展处理能力：
 
 - 视频 Domain Pack：转码、抽帧、镜头切分、ASR、OCR、视觉理解和镜头级 Embedding。
-- 商品 Domain Pack：SKU 映射、标题/卖点/属性清洗、商品图处理和多模态 Embedding。
+- 商品 Domain Pack：消费上游 SKU、标题、类目、卖点、属性和 Rights 快照，生成商品检索字段、图片表示和多模态 Embedding；权威字段修正仍归商品业务服务。
 - 其他 Domain Pack：文档分块、字段映射、内容理解和该领域需要的向量空间。
 
-`ProcessingProfile`、Embedding 模型版本、分块规则和索引 Schema 都必须版本化。在线请求只能使用已发布 Profile，不允许 Agent 动态指定未注册的解析器、模型或索引 Schema。
+`ProcessingProfile` 必须声明上游输入快照与 Input Artifact 的 Schema 和版本要求，以及本 Profile 生成的 Search Projection 类型。`ProcessingProfile`、Embedding 模型版本、分块规则和索引 Schema 都必须版本化。在线请求只能使用已发布 Profile，不允许 Agent 动态指定未注册的解析器、模型或索引 Schema。
+
+数据加工平面必须保持以下不变量：
+
+- 上游权威字段只读；发现冲突时返回可归因的校验错误，由上游修正并发布新版本。
+- 上游稳定产物优先复用；重复计算结果只能作为新的派生 Artifact，不能覆盖上游事实。
+- 每项 Search Projection 都能从输入快照、Input Artifact、Profile 和模型版本重建。
+- Indexing Worker 只能从加工产物生成索引，不得在索引阶段补做业务清洗或内容理解。
 
 ### 10.3 批处理、增量与重建
 
@@ -455,3 +487,4 @@ ES 与 Qdrant 都必须保存 `tenant_id`、对象状态、`rights_version` 和�
 7. 原材料加工与索引平面可同时执行批量、增量和重建任务，并与 Agent 对话链路解耦。
 8. 新增领域主要通过 Domain Pack 扩展，不复制 URRE 核心流水线。
 9. Embedding、Two-Tower、DNN Ranker 和 Reranker 具有独立版本、接口边界、降级策略和可归因指标。
+10. 上游 Canonical Snapshot 与稳定 Input Artifact 可校验复用；数据加工平面不修改权威业务字段，也不将 Search Projection 反写为业务事实。
