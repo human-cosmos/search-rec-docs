@@ -1,8 +1,6 @@
 # 通用 Video Domain Agent：设计与实施文档
 
-本目录当前只服务一个交付目标：实现通用 Video Domain Agent。产品工作台、广告跟品、商品与投放、真实数据加工、真实检索推荐、媒体渲染、视频版权或许可过滤、前端和跨领域能力均不属于本次交付。
-
-视频领域模型冻结为 `Video -> Clip` 两级。PRD 中的“片段”和“切片”统一为 Clip；不再保留 Shot、Segment、ShotPlan 或 ShotRequirement。
+本目录当前只服务一个交付目标：实现通用 Video Domain Agent。视频领域模型冻结为 `Video -> Clip` 两级。
 
 ## 权威顺序
 
@@ -16,6 +14,3 @@
 
 [`00_架构设计总纲.md`](00_架构设计总纲.md)、[`01_URRE架构设计.md`](01_URRE架构设计.md) 和 [`02_AgentRuntime架构设计.md`](02_AgentRuntime架构设计.md) 提供平台原则和 Runtime 边界。它们描述的其他领域及生产基础设施不进入本次交付。
 
-## 图的使用
-
-Markdown 正文中的 Mermaid 图是当前实施依据。`images/` 中的产品原型、共享聊天截图和旧平台图仅作调研材料，不作为 Video/Clip 模型、API 或验收依据。

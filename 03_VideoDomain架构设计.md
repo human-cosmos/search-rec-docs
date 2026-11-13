@@ -1,4 +1,4 @@
-# Video Domain 架构设计 2.2
+# Video Domain 架构设计
 
 **定位：** 通用 Video Domain Agent 的领域架构基线。
 
