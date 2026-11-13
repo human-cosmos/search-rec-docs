@@ -458,7 +458,9 @@ ES 与 Qdrant 都必须保存 `tenant_id`、对象状态和项目权限范围，
 
 数据加工平面至少监控：队列积压、各阶段吞吐、单对象耗时、模型调用失败率、死信数量、批次完成率、处理到可检索延迟、索引文档/Point 差异、索引版本分布、重建耗时和单位对象成本。
 
-验收必须证明：原始素材可重复加工；Worker 重试不产生重复结果；ES 与 Qdrant 可从同一加工快照重建；模型或 Schema 升级可以双版本构建，并通过 Active Manifest 发布和回滚；任一侧索引失败时 Manifest 保持原在线版本；跨租户和数据权限过滤在索引发布前后均有效；在线服务不依赖原始文件路径或对话 Agent。
+以上监控与验收条款属于**未来真实 URRE 2.0** 的门槛，不是本次 Video Domain Agent 开工或 Demo 的门禁。本次门槛以 [交付范围](implementation/00_交付范围与VideoClip模型.md) 和 [实施路线图](implementation/03_实施路线图与验收基线.md) 为准，只要求 Mock Search、Recommendation 和 Similar 可重复验收。
+
+未来真实 URRE 验收必须证明：原始素材可重复加工；Worker 重试不产生重复结果；ES 与 Qdrant 可从同一加工快照重建；模型或 Schema 升级可以双版本构建，并通过 Active Manifest 发布和回滚；任一侧索引失败时 Manifest 保持原在线版本；跨租户和数据权限过滤在索引发布前后均有效；在线服务不依赖原始文件路径或对话 Agent。
 
 ---
 
@@ -475,15 +477,25 @@ ES 与 Qdrant 都必须保存 `tenant_id`、对象状态和项目权限范围，
 
 ---
 
-## 12. URRE 2.0 的验收标准
+## 12. 验收标准
 
-1. Search、Recommendation、Similarity 与 Explore 的语义必须独立；本次 Video Domain Agent 只要求 Mock Search、Recommendation 和 Similar，Explore 不进入交付门槛。
-2. 同一领域可注册不同 Search 与 Recommendation 策略。
-3. 领域硬约束和权限过滤在排序前生效。
-4. 返回结果可追溯到策略、模型、召回通道和证据。
-5. 反馈事件可关联请求、候选集、用户行为和后续业务结果。
-6. 简单请求不需要启动 Agent。
-7. 原材料加工与索引平面可同时执行批量、增量和重建任务，并与 Agent 对话链路解耦。
-8. 新增领域主要通过 Domain Pack 扩展，不复制 URRE 核心流水线。
-9. Embedding、Two-Tower、DNN Ranker 和 Reranker 具有独立版本、接口边界、降级策略和可归因指标。
-10. 上游 Canonical Snapshot 与稳定 Input Artifact 可校验复用；数据加工平面不修改权威业务字段，也不将 Search Projection 反写为业务事实。
+### 12.1 本次门槛
+
+以 [交付范围](implementation/00_交付范围与VideoClip模型.md) 和 [实施路线图](implementation/03_实施路线图与验收基线.md) 为准：
+
+1. Search、Recommendation 与 Similar 的语义必须独立，并通过 Mock Adapter 验收；Explore 不进入本次交付门槛。
+2. 简单请求不需要启动 Agent。
+3. 反馈事件可关联请求、候选集和后续业务结果。
+4. 结果可追溯到策略和证据；Mock 与未来真实 Adapter 共用 Port 和 Schema。
+
+### 12.2 未来 URRE 2.0 验收
+
+以下条款不作为本次开工或 Demo 门禁：
+
+1. 同一领域可注册不同 Search 与 Recommendation 策略。
+2. 领域硬约束和权限过滤在排序前生效。
+3. 返回结果可追溯到策略、模型、召回通道和证据。
+4. 原材料加工与索引平面可同时执行批量、增量和重建任务，并与 Agent 对话链路解耦。
+5. 新增领域主要通过 Domain Pack 扩展，不复制 URRE 核心流水线。
+6. Embedding、Two-Tower、DNN Ranker 和 Reranker 具有独立版本、接口边界、降级策略和可归因指标。
+7. 上游 Canonical Snapshot 与稳定 Input Artifact 可校验复用；数据加工平面不修改权威业务字段，也不将 Search Projection 反写为业务事实。

@@ -6,9 +6,9 @@
 
 **服务端实现边界：** 业务可依赖的是 Runtime Java SDK 与 `/open/v1` 契约；服务端内部框架由 Runtime 平台维护。AgentScope Java 2.0 只能作为尚未由本仓库验证的实现候选，不能出现在业务接入依赖中。
 
-**文档基线：** 2026-11-12 根据 [Java SDK 文档](runtime-sdk/java/overview.md)、[API 速查](runtime-sdk/java/api-reference.md)和已拉取的 [Java 示例工程](java-examples/README.md)完成对照。
+**文档基线：** 2026-11-12 根据 Acore Runtime Java SDK 文档（`runtime-sdk/java/overview.md`、`runtime-sdk/java/api-reference.md`）和 Java 示例工程（`java-examples/README.md`）完成对照。这些路径是外部基线，**本仓库不收录**。
 
-**证据范围：** 当前工作区包含 SDK 文档与 `java-examples` 的真实 Java 调用、业务封装和测试源码，但仍不包含 `acore-runtime-sdk` 本身的源码/发布制品。本文以文档契约和示例源码双重核对；示例工程源码覆盖不代表目标环境鉴权、模型、资源和服务端版本已经验收。
+**证据范围：** 对照所依据的 SDK 文档与 `java-examples` 是外部基线，不在本仓库内。本仓库也不包含 `acore-runtime-sdk` 的源码或发布制品。本文以外部文档契约和示例源码双重核对；示例工程源码覆盖不代表目标环境鉴权、模型、资源和服务端版本已经验收。
 
 > **本次交付约束：** 本项目只接入一个 Video Domain Agent。平台跨领域协作、Product/Marketing Agent、真实 URRE 服务、视频生成和媒体执行均不在交付范围；本文中的相关章节仅作为 Runtime 通用边界参考。
 
@@ -503,7 +503,7 @@ Java SDK 可直接提供 `AcoreApiException` 的 `httpStatus()`、`type()`、`re
 
 ## 12. Java Runtime SDK 能力清单
 
-以下清单覆盖 `0.2.0` 当前公开能力，主要依据 [API 速查](runtime-sdk/java/api-reference.md)、[认证](runtime-sdk/java/authentication.md)、[Agent 版本](runtime-sdk/java/agents.md)、[任务](runtime-sdk/java/tasks.md)、[流式对话](runtime-sdk/java/streaming.md)、[工具与资源](runtime-sdk/java/tools-and-resources.md)、[MCP](runtime-sdk/java/mcp.md)、[文件](runtime-sdk/java/files.md)、[可靠性](runtime-sdk/java/reliability.md)和[后端集成](runtime-sdk/java/backend-integration.md)。目标环境是否已部署对应 Runtime 能力仍需通过在线验收确认。
+以下清单覆盖 `0.2.0` 当前公开能力，主要依据外部基线 `runtime-sdk/java/` 下的 API 速查、认证、Agent 版本、任务、流式对话、工具与资源、MCP、文件、可靠性和后端集成文档。这些路径不在本仓库内。目标环境是否已部署对应 Runtime 能力仍需通过在线验收确认。
 
 ### 12.1 客户端与认证
 

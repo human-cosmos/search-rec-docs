@@ -4,6 +4,8 @@
 > **范围：** 只验证通用 Video Domain Agent。
 > **模型：** `Video -> Clip`。
 > **依据：** [交付范围与模型](00_交付范围与VideoClip模型.md)、[工程契约](05_VideoDomainAgent_工程契约与研发Backlog.md)。
+>
+> 本文标题中的「纵向切片」指端到端验收切片，不是 PRD 里已被统一为 Clip 的领域对象。
 
 ## 1. 验收目标
 

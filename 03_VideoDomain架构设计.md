@@ -14,7 +14,7 @@ Video Domain Agent 负责：
 - 判断请求应由快速检索路径还是 Agent Workflow 处理。
 - 通过受控 Tool 调用 Search、Recommendation、Similar 和素材分配能力。
 - 生成结构化 Creative Brief、Storyboard、ClipPlan 和 MaterialAssignment。
-- 在信息不足、候选不足、权利受阻或预算耗尽时澄清、降级或停止。
+- 在信息不足、候选不足、预算耗尽，或候选因 `availability` 不可用时澄清、降级或停止。版权与许可过滤不在本次范围，不得据此实现过滤系统。
 - 保持任务、Artifact、Tool 调用和 Runtime Run 的可恢复、可审计关系。
 
 Video Domain Agent 不负责：
@@ -45,7 +45,7 @@ flowchart LR
 
 边界规则：
 
-- 简单 Search 和 Recommendation 直接调用 Port，不启动 Agent。
+- 简单 Search、Recommendation 和 Similar 直接调用 Port，不启动 Agent。
 - Agent 不直接读取 Fixture、数据库或底层索引。
 - Mock Adapter 与未来真实 Adapter 使用相同接口和 Schema。
 - Agent 的创作结果是结构化 Artifact，不是自然语言计划。
@@ -78,6 +78,7 @@ Video 是一级视频资产，可表示完整成片、上传视频、外部视�
 - `availability`
 - `tags`
 - `feature_version`
+- `created_at`
 
 ### 3.2 Clip
 
@@ -142,10 +143,11 @@ Clip 是 Video 内可独立发现、推荐、引用和分配的连续时间片�
 
 以用户、项目、当前 Storyboard、ClipRequirement 和已选素材为上下文主动提供候选。
 
-推荐场景至少包括：
+本次交付的 Recommendation scene 只包含 `clip_candidate`。
+
+以下场景属于未来扩展，不进入本次 API 枚举、Mock、Ticket 和验收：
 
 - `project_home`
-- `clip_candidate`
 - `search_complement`
 - `similar_alternative`
 - `continue_exploration`

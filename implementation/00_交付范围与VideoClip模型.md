@@ -17,6 +17,7 @@
 - 视频、Clip 的搜索、推荐、相似发现和反馈工具契约。
 - Storyboard、ClipPlan、ClipRequirement、MaterialAssignment 等 Agent 创作产物。
 - 基于固定 Mock 数据的检索、推荐和相似发现 Adapter。
+- Recommendation 本次只交付 `clip_candidate` 场景；`project_home`、`search_complement`、`similar_alternative`、`continue_exploration` 为未来扩展。
 - Agent 路由、澄清、局部修改、预算、失败和恢复策略。
 - 单元、契约、集成、Agent Eval 和故障注入测试。
 - 可替换真实检索推荐服务的 Port/Adapter 边界，但真实服务不属于本次交付。
@@ -91,6 +92,7 @@ Clip 至少包含：
 
 - 每个 Clip 必须引用一个 Video。
 - `0 <= start_ms < end_ms <= Video.duration_ms`。
+- `duration_ms` 必须等于 `end_ms - start_ms`，是落列字段，不是仅在示例中出现的派生值。
 - Clip 可以覆盖单个语义切分、跨切点片段或独立切片，但不再区分 Shot 和 Segment。
 - 搜索和推荐候选的 `entity_type` 只能是 `video` 或 `clip`。
 - Clip 级候选必须携带来源 `video_id` 和精确时间区间。
@@ -109,7 +111,15 @@ Clip 至少包含：
 | Video / Shot / Segment | Video / Clip |
 | `entity_type: shot \| segment` | `entity_type: clip` |
 
-不得在 API、Schema、数据库表、事件、Tool、Prompt 或代码包名中继续引入 Shot/Segment 层级。
+PRD 用语与本次两级模型的对应关系（这是有意冻结，不是 PRD 原文分层）：
+
+| PRD 用语 | 本次概念 |
+|---|---|
+| 成片 | Video |
+| 切片 / 片段 / 镜头 | Clip |
+| 分镜 / 槽位 | 计划侧 Storyboard / ClipRequirement，不是素材对象 |
+
+不得在 API、Schema、数据库表、事件、Tool、Prompt 或代码包名中继续引入 Shot/Segment 层级，也不得把镜头做成第三层素材对象。
 
 ## 3. 创作产物模型
 
@@ -126,7 +136,7 @@ TaskBrief
 
 ### 3.1 Storyboard
 
-Storyboard 的场景下使用 `clip_requirements` 表达叙事和执行需求，不再使用 `shots`。
+Storyboard 的场景下使用 `clip_requirements` 表达叙事和执行需求，不再使用 `shots`。这些条目与 ClipPlan 中的条目使用同一 `ClipRequirement` Schema，必填字段不得在 Storyboard 示例中削薄。
 
 ### 3.2 ClipPlan
 
@@ -184,7 +194,7 @@ Mock 必须与正式 Port 使用相同 Schema。切换真实 Adapter 时，上�
 1. 所有机器契约中只存在 `Video` 和 `Clip` 两级视频对象。
 2. 简单搜索不启动 Agent，复杂搜索和创作任务进入 Agent。
 3. Agent 能生成 TaskBrief、CreativeBrief、Storyboard、ClipPlan 和 MaterialAssignment。
-4. Search 和 Recommendation 均通过 Mock Port 工作。
+4. Search、Recommendation 和 Similar 均通过 Mock Port 工作。
 5. 用户修改单个 Clip 时只重算受影响范围。
 6. Task 等待、恢复、幂等、预算和 Tool 审计通过。
 7. Agent Eval 覆盖澄清、零结果、局部替换、工具失败和 Prompt Injection。

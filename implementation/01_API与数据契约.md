@@ -201,6 +201,8 @@ Task 状态：
 
 `POST /api/v1/retrieval/recommend`
 
+本次 `scene` 枚举只允许 `clip_candidate`。其余推荐场景见 `03`，列为未来扩展，不进入本次契约。
+
 ```json
 {
   "domain": "video",
@@ -293,7 +295,7 @@ Evidence Resolver 必须重新校验租户和项目访问权限，不接受宿�
 ```json
 {
   "event_type": "recommendation.clicked",
-  "source": "api_ui",
+  "source": "api",
   "occurred_at": "2026-11-12T10:00:00Z",
   "request_id": "req_001",
   "candidate_set_id": "cs_001",
@@ -307,7 +309,7 @@ Evidence Resolver 必须重新校验租户和项目访问权限，不接受宿�
 }
 ```
 
-请求必须携带 `Idempotency-Key`。客户端只能提交 UI 遥测；`material.assigned`、`material.replaced` 和 `material.final_kept` 由业务状态迁移通过 Outbox 产生。
+请求必须携带 `Idempotency-Key`。本次无前端，反馈示例如上来自 API 或 Agent；`material.assigned`、`material.replaced` 和 `material.final_kept` 由业务状态迁移通过 Outbox 产生。
 
 ## 5. CandidateSet
 
@@ -392,7 +394,11 @@ Clip 候选：
           "storyboard_clip_id": "sb_clip_001",
           "narrative_role": "establishing",
           "visual_goal": "未来工厂全景",
-          "duration_target_ms": 5000
+          "duration_target_ms": 5000,
+          "hard_constraints": {},
+          "soft_preferences": {},
+          "fallback_requirements": {},
+          "evidence_requirements": []
         }
       ]
     }
@@ -417,6 +423,7 @@ Clip 候选：
       "duration_target_ms": 6000,
       "hard_constraints": {},
       "soft_preferences": {"orientation": "landscape"},
+      "fallback_requirements": {"allow_cutaway": true},
       "evidence_requirements": ["human_robot_collaboration"]
     }
   ]
@@ -511,7 +518,22 @@ Clip 候选：
 
 ## 8. Events
 
-统一关联键：
+本节是本次交付的事件目录与统一关联键权威来源。总纲和其他文档引用本节，不再各自维护一份关联键清单。
+
+统一关联键（按出现处填写，跨日志、SSE、审计必须可对齐）：
+
+- `request_id`
+- `trace_id`
+- `task_id`
+- `step_id`
+- `run_id`
+- `runtime_run_id`
+- `action_request_id`（Run 投影中对应 `current_action_request_id`）
+- `tool_call_id`
+- `candidate_set_id`
+- `artifact_id`
+
+事件信封另外必填：
 
 - `event_id`
 - `event_type`
@@ -519,17 +541,9 @@ Clip 候选：
 - `tenant_id`
 - `user_id`
 - `project_id`
-- `task_id`
 - `session_id`
-- `request_id`
-- `run_id`
-- `runtime_run_id`
-- `step_id`
-- `tool_call_id`
-- `candidate_set_id`
-- `artifact_id`
 
-本节是本次交付的事件目录权威来源。必要事件：
+必要事件：
 
 - `task.created`
 - `task.status.changed`

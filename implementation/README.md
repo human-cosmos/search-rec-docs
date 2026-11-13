@@ -24,7 +24,7 @@
 4. 按 [实施路线图](03_实施路线图与验收基线.md)排期。
 5. 使用 [验收脚本](06_VideoDomainAgent_纵向切片与验收脚本.md)完成 Mock 端到端验收。
 
-Runtime 接入参考 [runtime-sdk Java 文档](../runtime-sdk/java/overview.md)与 [java-examples](../java-examples/README.md)。Runtime SDK 制品和目标环境仍需在开发环境单独验收。
+Runtime 接入以 Acore Runtime Java SDK 文档和示例为**外部基线**，本仓库不收录 `runtime-sdk/` 或 `java-examples/`。SDK 制品和目标环境仍需在开发环境单独验收。
 
 ## 维护原则
 

@@ -438,7 +438,8 @@ public interface AgentRuntimePort {
   "preview_ref": "preview/video_001",
   "availability": "available",
   "tags": ["factory", "technology"],
-  "feature_version": "fixture-v1"
+  "feature_version": "fixture-v1",
+  "created_at": "2026-11-01T00:00:00Z"
 }
 ```
 
@@ -522,11 +523,11 @@ public interface AgentRuntimePort {
     {
       "candidate_id": "cand_001",
       "entity_type": "clip",
-      "entity_id": "clip_009",
+      "entity_id": "clip_003",
       "video_id": "video_002",
-      "clip_id": "clip_009",
-      "start_ms": 12500,
-      "end_ms": 18800,
+      "clip_id": "clip_003",
+      "start_ms": 2000,
+      "end_ms": 9000,
       "rank": 1,
       "score": 0.923,
       "score_breakdown": {
@@ -538,7 +539,7 @@ public interface AgentRuntimePort {
       "recall_channels": ["keyword", "semantic"],
       "evidence": {
         "summary": "工程师与机械臂协作装配",
-        "evidence_refs": ["evidence/clip_009/frame_001"]
+        "evidence_refs": ["evidence/clip_003/frame_001"]
       },
       "availability": "available",
       "versions": {
@@ -570,7 +571,11 @@ public interface AgentRuntimePort {
           "storyboard_clip_id": "sb_clip_001",
           "narrative_role": "establishing",
           "visual_goal": "未来工厂全景",
-          "duration_target_ms": 5000
+          "duration_target_ms": 5000,
+          "hard_constraints": {},
+          "soft_preferences": {},
+          "fallback_requirements": {},
+          "evidence_requirements": []
         }
       ]
     }
@@ -619,17 +624,17 @@ public interface AgentRuntimePort {
   "entity_ref": {
     "entity_type": "clip",
     "video_id": "video_002",
-    "clip_id": "clip_009"
+    "clip_id": "clip_003"
   },
   "match_evidence": {
     "summary": "人机协作装配，近景，时长满足要求",
-    "evidence_refs": ["evidence/clip_009/frame_001"]
+    "evidence_refs": ["evidence/clip_003/frame_001"]
   },
   "alternatives": [
     {
       "entity_type": "clip",
-      "video_id": "video_003",
-      "clip_id": "clip_015"
+      "video_id": "video_002",
+      "clip_id": "clip_004"
     }
   ],
   "selection_reason": "主体、动作和时长均满足目标",
@@ -847,6 +852,7 @@ CREATE TABLE video_clip (
   video_id         varchar(64) NOT NULL REFERENCES video_asset(video_id),
   start_ms         bigint NOT NULL,
   end_ms           bigint NOT NULL,
+  duration_ms      bigint NOT NULL,
   preview_ref      varchar(500),
   keyframe_ref     varchar(500),
   semantic_summary text,
@@ -856,7 +862,7 @@ CREATE TABLE video_clip (
   feature_version  varchar(64),
   model_versions_json jsonb NOT NULL DEFAULT '[]'::jsonb,
   created_at       timestamptz NOT NULL DEFAULT now(),
-  CHECK (start_ms >= 0 AND end_ms > start_ms)
+  CHECK (start_ms >= 0 AND end_ms > start_ms AND duration_ms = end_ms - start_ms)
 );
 
 CREATE INDEX idx_video_clip_video_time
@@ -1069,10 +1075,11 @@ CREATE TABLE video_agent_event (
 
 固定 Fixture：
 
-- `video_001`: 未来工厂，2 个 Clip。
-- `video_002`: 人机协作，2 个 Clip。
-- `video_003`: 产品展示，2 个 Clip。
-- `video_004`: 低质量和缺失证据测试，2 个 Clip。
+- `video_001`: 未来工厂，3 个 Clip（含跨切点 `clip_008`）。
+- `video_002`: 人机协作，2 个 Clip（`clip_003`、`clip_004`）。
+- `video_003`: 产品展示，2 个 Clip（`clip_005`、`clip_006`）。
+- `video_004`: 低质量和缺失证据测试，2 个 Clip（`clip_007`、`clip_009`）。
+固定 ID 以 `implementation/06` 为准，示例不得使用不在该 Fixture 中的 `video_*` / `clip_*`。
 
 Mock 行为：
 
@@ -1179,13 +1186,15 @@ WHERE task_id = :task_id
 
 ## 14. Sprint
 
-| Sprint | 目标 | Ticket |
-|---|---|---|
-| S1 | 契约、DB、Mock Catalog | 001–010 |
-| S2 | Search/Recommend/Similar | 011–015 |
-| S3 | Runtime、Agent、Tool | 016–020 |
-| S4 | Creative Workflow | 021–024 |
-| S5 | Composition、Eval、Demo | 025–030 |
+Sprint 只是排期切片，阶段编号以 [实施路线图](03_实施路线图与验收基线.md) 的阶段 0–4 为准。
+
+| Sprint | 对应阶段 | 目标 | Ticket |
+|---|---|---|---|
+| S1 | 阶段 0 | 契约、DB、Mock Catalog | 001–010 |
+| S2 | 阶段 1 | Search/Recommend/Similar | 011–015 |
+| S3 | 阶段 2 | Runtime、Agent、Tool | 016–020 |
+| S4 | 阶段 3 | Creative Workflow | 021–024 |
+| S5 | 阶段 3–4 | Composition、Eval、Demo | 025–030 |
 
 ## 15. Definition of Ready
 

@@ -16,7 +16,7 @@
   → Intent Router
   → Video Domain Agent
   → TaskBrief / CreativeBrief / Storyboard / ClipPlan
-  → 每个计划 Clip 调用 Mock Search / Recommendation
+  → 每个计划 Clip 调用 Mock Search / Recommendation / Similar
   → CandidateSet + Evidence
   → MaterialAssignment
   → 用户确认或局部修改
@@ -230,14 +230,20 @@ ClipPlan 是创作计划，不是素材。每个 ClipRequirement 使用独立的
   "storyboard_clip_id": "sb_clip_003",
   "entity_ref": {
     "entity_type": "clip",
-    "video_id": "video_100",
-    "clip_id": "clip_009"
+    "video_id": "video_002",
+    "clip_id": "clip_003"
   },
   "match_evidence": {
     "summary": "工程师与机械臂协作装配",
-    "evidence_refs": ["evidence/clip_009/frame_001"]
+    "evidence_refs": ["evidence/clip_003/frame_001"]
   },
-  "alternatives": [],
+  "alternatives": [
+    {
+      "entity_type": "clip",
+      "video_id": "video_002",
+      "clip_id": "clip_004"
+    }
+  ],
   "selection_reason": "内容、时长和画面要求均满足 Clip 需求",
   "user_confirmed": false
 }
@@ -339,7 +345,7 @@ platform_limits:
 - 工具不可重试。
 - 租户或权限冲突。
 
-## 7. Search 与 Recommendation
+## 7. Search、Recommendation 与 Similar
 
 ### 7.1 Search
 
@@ -356,7 +362,7 @@ SearchPlan 的目标层级为：
     "duration_ms": {"gte": 2000, "lte": 10000}
   },
   "recall_channels": ["keyword", "semantic", "metadata"],
-  "candidate_budget": 200
+  "candidate_budget": 100
 }
 ```
 
@@ -378,7 +384,7 @@ Recommendation 至少接收：
 - 排除的 Clip。
 - 多样性和时长约束。
 
-场景统一为 `clip_candidate`，不保留按旧对象层级命名的场景。
+本次场景枚举只交付 `clip_candidate`。`project_home`、`search_complement`、`similar_alternative`、`continue_exploration` 为未来扩展，不进入本次 Mock、Ticket 和验收。
 
 ### 7.3 候选合并
 
@@ -474,6 +480,8 @@ total = 0.75 * clip_fit + 0.25 * collection_fit
 
 ### 10.1 对外 API
 
+本节是摘要，完整清单以 [API 与数据契约](01_API与数据契约.md) 为准。除任务主路径外，本次还必须交付 Artifact 版本/审批、Assignment 创建与锁定、Agent Run 回放，以及 `POST /api/v1/evidence/resolve`。
+
 - `POST /api/v1/video/projects`
 - `POST /api/v1/video/projects/{projectId}/tasks`
 - `GET /api/v1/video/tasks/{taskId}`
@@ -482,11 +490,19 @@ total = 0.75 * clip_fit + 0.25 * collection_fit
 - `POST /api/v1/video/tasks/{taskId}/resume`
 - `POST /api/v1/video/tasks/{taskId}/cancel`
 - `GET /api/v1/video/artifacts/{artifactId}`
+- `GET /api/v1/video/artifacts/{artifactId}/versions`
+- `POST /api/v1/video/artifacts/{artifactId}/approve`
+- `POST /api/v1/video/compositions/assign`
+- `GET /api/v1/video/assignments/{assignmentSetId}`
+- `PATCH /api/v1/video/assignments/{assignmentSetId}`
 - `POST /api/v1/video/assignments/{assignmentSetId}/confirm`
+- `GET /api/v1/video/agent-runs/{runId}`
+- `GET /api/v1/video/agent-runs/{runId}/events`
 - `POST /api/v1/retrieval/search`
 - `POST /api/v1/retrieval/recommend`
 - `POST /api/v1/retrieval/similar`
 - `POST /api/v1/retrieval/feedback`
+- `POST /api/v1/evidence/resolve`
 
 ### 10.2 Tool
 
@@ -585,41 +601,15 @@ total = 0.75 * clip_fit + 0.25 * collection_fit
 
 ## 14. 开发与测试计划
 
-### 阶段 0：契约与 Mock
+实施阶段以 [实施路线图](03_实施路线图与验收基线.md) 的阶段 0–4 为唯一编号权威。本节只做对照，不再平行编号。
 
-- Monorepo、Schema、Port、Migration。
-- Fake Video/Clip Catalog。
-- Fake Search、Recommendation、Similar、Evidence。
-- Task/Artifact/ToolCall/Budget/Event。
-
-退出：固定 Fixture 可完成 Search、Recommend、Similar。
-
-### 阶段 1：Agent 与 Runtime
-
-- Intent Router。
-- Video Domain AgentSpec。
-- Runtime SDK Adapter、LocalToolset、Action 和 SSE。
-- Search/Recommendation Tool。
-
-退出：复杂请求可完成 Agent Tool Loop，简单请求绕过 Agent。
-
-### 阶段 2：Creative Workflow
-
-- CreativeBrief、Storyboard、ClipPlan。
-- 并行 Clip 素材检索。
-- Composition 和 MaterialAssignment。
-- 用户锁定、替换和确认。
-
-退出：三个计划 Clip 可生成稳定 Assignment，局部修改不重算其他 Clip。
-
-### 阶段 3：Eval 与交付
-
-- Agent Eval。
-- 故障注入。
-- 可观测性。
-- 交付文档和 Demo。
-
-退出：[验收表](06_VideoDomainAgent_纵向切片与验收脚本.md)全部通过。
+| `implementation/03` 阶段 | 本节工作内容 |
+|---|---|
+| 阶段 0：契约、数据库与 Mock Catalog | Monorepo、Schema、Port、Migration；Fake Video/Clip Catalog；Task/Artifact/ToolCall/Budget/Event |
+| 阶段 1：Mock Search、Recommendation 与 Similar | Fake Search、Recommendation、Similar、Evidence；固定 Fixture 可完成三类检索 |
+| 阶段 2：Runtime 与 Video Domain Agent | Intent Router、AgentSpec、Runtime SDK Adapter、LocalToolset、Action 和 SSE；复杂请求走 Agent，简单请求绕过 |
+| 阶段 3：Creative Workflow 与 Assignment | CreativeBrief、Storyboard、ClipPlan、并行检索、Composition、用户锁定/替换/确认 |
+| 阶段 4：Eval、安全与交付 | Agent Eval、故障注入、可观测性、交付文档和 Demo；[验收表](06_VideoDomainAgent_纵向切片与验收脚本.md)全部通过 |
 
 ### 测试分层
 
@@ -633,7 +623,7 @@ total = 0.75 * clip_fit + 0.25 * collection_fit
 
 1. 代码和契约中不存在 Shot、Segment 或第二套视频层级。
 2. Video/Clip 关系、时间区间和来源可校验。
-3. 简单 Search/Recommendation 不启动 Agent。
+3. 简单 Search、Recommendation 和 Similar 不启动 Agent。
 4. Agent 能生成 TaskBrief、CreativeBrief、Storyboard、ClipPlan 和 MaterialAssignment。
 5. Search、Recommendation、Similar 全部通过 Mock Port 工作。
 6. 每个计划 Clip 有 Search 或 Recommendation 结果路径。
