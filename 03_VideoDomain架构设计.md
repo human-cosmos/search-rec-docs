@@ -1,10 +1,10 @@
-# Video Domain 架构设计
+# Video Domain 与跨域编排架构设计
 
-**定位：** 通用 Video Domain Agent 的领域架构基线。
+**定位：** 通用 Video Domain Agent 及其跨域编排边界的领域架构基线。
 
-**范围：** Video 与 Clip 的发现、推荐、规划、素材分配和用户确认。
+**范围：** Video 与 Clip 的发现、推荐、规划、素材分配和用户确认；主 Workflow 对 Product、Landing Page、Copy、Ads、Video 的受控编排。
 
-**交付约束：** 只交付 Agent 及其领域契约；检索推荐使用 Mock，真实数据加工、索引、视频生成和媒体渲染不进入本次交付。范围以 [交付范围与 Video/Clip 模型基线](implementation/00_交付范围与VideoClip模型.md)为准。
+**交付约束：** 交付 Video Domain Agent、跨域编排契约和领域 Mock/Adapter；真实检索推荐、领域实现、视频生成和媒体渲染不进入本次交付。范围以 [交付范围与 Video/Clip 模型基线](implementation/00_交付范围与VideoClip模型.md)为准，跨域细节见 [跨域编排设计](implementation/07_跨域编排与领域子工作流设计.md)。
 
 ## 1. 设计目标
 
@@ -17,23 +17,39 @@ Video Domain Agent 负责：
 - 在信息不足、候选不足、预算耗尽，或候选因 `availability` 不可用时澄清、降级或停止。版权与许可过滤不在本次范围，不得据此实现过滤系统。
 - 保持任务、Artifact、Tool 调用和 Runtime Run 的可恢复、可审计关系。
 
+CreativeProductionWorkflow 负责：
+
+- 判断请求是 Video-only 还是跨域创作。
+- 生成 CampaignBrief 和跨域依赖图。
+- 通过 `DomainInvocationPort` 调用 Product、Landing Page、Copy、Ads 和 Video 子工作流。
+- 管理并行、fan-in、领域超时、部分成功、审批、补偿和恢复。
+- 只通过 Artifact Ref 和版本化 Envelope 交换领域结果。
+
 Video Domain Agent 不负责：
 
 - 真实视频入库、语义切片、ASR、OCR 或向量化。
 - 搜索索引、推荐训练、排序模型和线上实验。
 - 视频生成、字幕、擦除、换画幅、配音、渲染和导出。
 - 视频版权、许可、商业用途、地域可用性和署名过滤。
-- 产品前端、商品、广告、投放和跨领域流程。
+- 产品前端、商品、广告、投放、落地页和跨领域依赖编排。
+- 直接调用 Product、Landing Page、Copy 或 Ads 服务。
 
 ## 2. 系统边界
 
 ```mermaid
-flowchart LR
+flowchart TB
   U[用户目标] --> API[Business API / SSE]
   API --> ROUTER[Intent Router]
   ROUTER -->|简单 Search / Recommendation / Similar| MOCK[Retrieval Port]
-  ROUTER -->|复杂创作任务| WF[Video Workflow]
-  WF <--> RT[Runtime SDK Adapter]
+  ROUTER -->|Video-only 复杂任务| VWF[Video Workflow]
+  ROUTER -->|跨域任务| CWF[CreativeProductionWorkflow]
+  CWF --> DIP[DomainInvocationPort]
+  DIP --> PRODUCT[Product Domain]
+  DIP --> LANDING[Landing Page Domain]
+  DIP --> COPY[Copy Domain]
+  DIP --> ADS[Ads Domain]
+  DIP --> VWF
+  VWF <--> RT[Runtime SDK Adapter]
   RT <--> AGENT[Video Domain Agent]
   AGENT --> TOOLS[Tool Registry]
   TOOLS --> POLICY[Policy Gateway]
@@ -51,6 +67,27 @@ flowchart LR
 - Agent 的创作结果是结构化 Artifact，不是自然语言计划。
 - 项目状态保存在业务数据库，聊天记录不是事实源。
 - Runtime Run 只投影到 Task/Step，不成为业务状态机。
+
+### 2.1 跨域编排边界
+
+| 组件 | 责任 | 不负责 |
+|---|---|---|
+| CreativeProductionWorkflow | 主 Task、依赖图、并行、汇总、审批、恢复 | 领域内部业务判断 |
+| DomainInvocationPort | 领域调用的统一契约和状态映射 | 领域实现细节 |
+| Product Domain | 商品、品牌、市场、Offer、Claim 事实 | 文案、视频、广告发布 |
+| Landing Page Domain | 页面获取、诊断、方案和校验 | 视频镜头选择 |
+| Copy Domain | 广告语、口播稿、CTA 和本地化 | 商品事实判定 |
+| Ads Domain | 广告草稿、预算、受众、合规校验 | 自动发布、视频创作 |
+| Video Workflow | Video Agent 执行和视频 Artifact | 其他领域依赖 |
+
+边界规则：
+
+- 主 Workflow 是跨域编排唯一权威。
+- Video Domain Agent 只能被 Video Workflow 启动。
+- 领域之间不直接串联，必须经主 Workflow。
+- 领域只交换 Artifact Ref 和 DomainInvocationResult，不共享内部实体。
+- 跨域编排不引入新的 Video 素材层级。
+- Ads 发布是独立外部副作用，必须经过范围化用户审批。
 
 ## 3. Video 与 Clip 对象
 
@@ -164,6 +201,8 @@ Clip 是 Video 内可独立发现、推荐、引用和分配的连续时间片�
 
 | 能力 | 默认实现 | 职责 |
 |---|---|---|
+| CreativeProductionWorkflow | 业务 Workflow | 跨域依赖、并行、汇总、审批和恢复 |
+| DomainInvocationPort | Workflow 调用 Port | 调 Product、Landing Page、Copy、Ads 和 Video |
 | Video Domain Agent | 托管 Agent | 意图、澄清、创作判断和有限工具循环 |
 | Intent Router | 规则 + 可选小模型 | 简单请求直达 Port，复杂请求进入 Workflow |
 | Search Plan | Schema 约束的 Tool 输入 | 生成受控检索条件 |
@@ -173,6 +212,8 @@ Clip 是 Video 内可独立发现、推荐、引用和分配的连续时间片�
 | Policy Gateway | 业务 Service | 身份权限、项目范围、预算和 Tool 白名单 |
 
 Agent 不遍历全量候选，不修改候选分数，不直接写项目数据库，也不把内部推理写入 Artifact。
+
+Video Domain Agent 不持有跨域 Tool。主 Workflow 调用其他领域时，不进入 Video Agent 的 Tool Loop。
 
 ## 6. Creative IR
 
@@ -249,6 +290,34 @@ flowchart TB
 - 信息矛盾：进入 `Waiting(awaiting_user)`。
 - 模型输出非法：拒绝 Tool 调用或 Artifact 写入，重新修正一次。
 
+### 7.1 跨域创作流程
+
+```mermaid
+flowchart TB
+  U[跨域目标] --> CB[CampaignBrief + WorkflowPlan]
+  CB --> P[Product.resolve_product_context]
+  P --> VA[Video.analyze_and_search]
+  P --> LD[LandingPage.fetch_and_diagnose]
+  VA --> COPY[Copy.generate_package]
+  LD --> COPY
+  COPY --> VP[Video.plan_and_assign]
+  COPY --> LP[LandingPage.generate_plan]
+  VP --> ADS[Ads.prepare_draft]
+  LP --> ADS
+  P --> ADS
+  ADS --> RP[ReviewPackage]
+  RP --> U2{用户审批}
+  U2 -->|修改指定领域| X[局部重跑依赖]
+  U2 -->|确认草稿| OUT[跨域结构化交付]
+```
+
+约束：
+
+- 主 Workflow 只读取领域结果和 Artifact 引用。
+- Video 的 `video_only` 路径不受跨域编排影响。
+- 缺少依赖领域结果时，下游领域保持 Waiting，不伪造输入。
+- 领域失败只阻塞其下游，不阻塞无依赖的并行分支。
+
 ## 8. Mock 架构
 
 本次交付使用：
@@ -256,6 +325,10 @@ flowchart TB
 - `FakeVideoCatalogPort`
 - `FakeRetrievalGateway`（覆盖 Search、Recommendation、Similar 和零结果）
 - `FakeEvidenceGateway`
+- `FakeProductDomain`
+- `FakeLandingPageDomain`
+- `FakeCopyDomain`
+- `FakeAdsDomain`
 
 要求：
 
@@ -264,6 +337,8 @@ flowchart TB
 - 所有 Mock 结果满足与生产 API 相同的 JSON Schema。
 - 业务代码只依赖 Port，不判断当前是否使用 Mock。
 - Mock 数据与评测数据分离：固定 Fixture 保证集成测试稳定，评测集允许独立版本。
+- 跨域 Mock 只返回 Artifact Envelope 和 DomainInvocationResult，不返回领域内部实体。
+- 跨域 Mock 支持领域失败、部分成功、stale 输入和审批缺失。
 
 ## 9. 权限与安全
 
@@ -294,3 +369,8 @@ flowchart TB
 9. Task 等待、恢复、取消和预算耗尽行为符合状态机。
 10. 不依赖真实索引、媒体渲染或前端即可完成端到端验收。
 11. Feedback 经 Mock Port 可写、可审计，且不依赖前端。
+12. 跨域请求由主 Workflow 创建，不扩张为单个 Video Agent 的全能职责。
+13. Product、Landing Page、Copy、Ads 均通过 `DomainInvocationPort` 调用。
+14. Video Agent 输入只含视频所需 Context Snapshot，输出只含 Video Artifact。
+15. 领域失败、部分成功、Artifact stale、审批和恢复链路可重复验证。
+16. Ads 草稿不得自动发布，外部发布必须有独立审批。

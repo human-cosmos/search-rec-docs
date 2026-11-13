@@ -1,6 +1,6 @@
 # API 与数据契约
 
-> **状态：** 通用 Video Domain Agent API 基线。
+> **状态：** Video Domain Agent 与跨域编排 API 基线。
 > **模型：** `Video -> Clip`。
 > **范围：** [交付范围与 Video/Clip 模型](00_交付范围与VideoClip模型.md)。
 > **机器契约：** 正式编码以生成的 OpenAPI、JSON Schema、DDL 和契约测试为准。
@@ -16,6 +16,9 @@
 7. 所有写操作有幂等键和审计字段；公共头与幂等语义见 §3.0。
 8. Mock 与未来真实 Adapter 使用相同 Schema。
 9. 对外事件只暴露状态、摘要和引用，不暴露内部推理。
+10. 跨域任务由 `CreativeProductionWorkflow` 持有，Video Agent 不调用其他领域。
+11. 领域间只交换版本化 Artifact Envelope 和 `DomainInvocationResult`。
+12. Ads 草稿与外部发布是不同审批范围。
 
 ## 2. Domain Pack SPI
 
@@ -109,6 +112,10 @@ Task 状态：
 
 - `awaiting_user`
 - `budget_exhausted`
+- `awaiting_domain`
+- `awaiting_approval`
+
+Video-only Task 只启用前两项；`awaiting_domain` 和 `awaiting_approval` 仅用于 Creative Production Task 或跨域子工作流。
 
 Task 合法状态迁移以 [详细设计与实施手册](04_VideoDomainAgent_详细设计与实施手册.md) §3.1 为准。`POST /video/tasks/{taskId}/wait` 请求体必须带已启用的 `waiting_reason`，且仅允许从 `Running` 进入 `Waiting`；禁止客户端把任意状态的任务直接打成 `Waiting`。
 
@@ -155,6 +162,58 @@ Assignment `status` 枚举为 `proposed`、`confirmed`、`locked`、`superseded`
 - `current_action_request_id`
 - `runtime_last_event_id`
 - `usage`
+
+### 3.5 Creative Production Task
+
+跨域任务使用独立资源，避免把 Product、Landing Page、Copy 和 Ads 塞入 Video Task。
+
+```http
+POST /api/v1/creative/projects
+GET  /api/v1/creative/projects/{projectId}
+POST /api/v1/creative/projects/{projectId}/tasks
+GET  /api/v1/creative/tasks/{taskId}
+GET  /api/v1/creative/tasks/{taskId}/stream
+GET  /api/v1/creative/tasks/{taskId}/domains
+GET  /api/v1/creative/tasks/{taskId}/domains/{invocationId}
+GET  /api/v1/creative/artifacts/{artifactId}
+GET  /api/v1/creative/artifacts/{artifactId}/versions
+POST /api/v1/creative/tasks/{taskId}/wait
+POST /api/v1/creative/tasks/{taskId}/resume
+POST /api/v1/creative/tasks/{taskId}/cancel
+POST /api/v1/creative/tasks/{taskId}/confirmations
+POST /api/v1/creative/tasks/{taskId}/publish
+```
+
+创建任务：
+
+```json
+{
+  "goal": "把商品 1044535 跟到韩国 TikTok，生成口播、落地页方案和视频广告草稿，不自动发布",
+  "mode": "cross_domain_campaign",
+  "target": {
+    "market": "KR",
+    "platform": "TikTok",
+    "locale": "ko-KR"
+  },
+  "requested_outputs": [
+    "product-context",
+    "video-creative-artifact",
+    "copy-package",
+    "landing-page-plan",
+    "ads-draft"
+  ],
+  "constraints": {
+    "duration_ms": 28000,
+    "aspect_ratio": "9:16"
+  },
+  "execution": {
+    "allow_partial": true,
+    "require_publish_approval": true
+  }
+}
+```
+
+Video-only 请求继续使用 §3.1 的 `mode=creation` Video Task。跨域领域调用和状态细节以 [跨域编排设计](07_跨域编排与领域子工作流设计.md) §8 / §9 为准。
 
 ## 4. Retrieval API
 
@@ -527,7 +586,10 @@ Clip 候选：
 - `schema_version`
 - `project_id`
 - `task_id`
+- `owner_domain`
+- `producer_invocation_id`
 - `parent_artifact_ids`
+- `content_schema`
 - `content_ref`
 - `content_hash`
 - `producer_tool`
@@ -535,6 +597,38 @@ Clip 候选：
 - `validation_status`
 - `permission_scope`
 - `created_at`
+
+### 6.5 Domain Invocation
+
+```json
+{
+  "schema_version": "1.0",
+  "invocation_id": "di_001",
+  "task_id": "task_001",
+  "step_key": "copy.generate_package",
+  "domain": "copy",
+  "operation": "generate_copy_package",
+  "status": "succeeded",
+  "input_refs": [
+    "artifact://product-context/pc_001/v1"
+  ],
+  "output_refs": [
+    "artifact://copy-package/copy_001/v1"
+  ],
+  "warnings": [],
+  "error": null,
+  "usage": {
+    "units": 2
+  },
+  "external_task_ref": null
+}
+```
+
+`domain` 允许值：`product`、`landing_page`、`copy`、`ads`、`video`。
+
+`status` 允许值：`started`、`succeeded`、`partial`、`needs_user_action`、`failed`、`cancelled`。
+
+领域调用必须由主 Workflow 发起。该契约不注册为 Video Domain Agent Tool。
 
 ## 7. Agent Tool
 
@@ -574,6 +668,9 @@ Clip 候选：
 - `tool_call_id`
 - `candidate_set_id`
 - `artifact_id`
+- `workflow_plan_id`
+- `domain_invocation_id`
+- `external_domain_task_id`
 
 事件信封另外必填：
 
@@ -599,6 +696,13 @@ Clip 候选：
 - `recommendation.clicked`
 - `material.rejected`
 - `material.assigned/replaced/final_kept`
+- `workflow.plan.created`
+- `domain.invocation.started/completed/failed/cancelled`
+- `domain.artifact.published/staled`
+- `workflow.review.ready`
+- `creative.approval.required/decided`
+- `ads.draft.ready`
+- `publish.requested`
 
 `preview.started/completed` 属于未来 UI 遥测，本次没有预览 Tool 和前端，不列为必要事件。
 
@@ -626,6 +730,9 @@ Clip 候选：
 - `conflict`
 - `rate_limited`
 - `dependency_timeout`
+- `domain_unavailable`
+- `dependency_failed`
+- `approval_required`
 - `model_error`
 - `budget_exhausted`
 - `internal`

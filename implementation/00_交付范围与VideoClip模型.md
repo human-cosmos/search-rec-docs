@@ -1,12 +1,12 @@
 # 交付范围与 Video / Clip 模型基线
 
-> **状态：** 已冻结，2026-11-12。
+> **状态：** 已冻结，2026-11-13。
 > **适用范围：** 本仓库所有架构、实施、接口、Backlog 和验收文档。
 > **冲突处理：** 与本文冲突的旧版 `Shot / Segment / ShotPlan` 描述不再具有实施效力。
 
 ## 1. 最终交付范围
 
-本项目的最终交付物是一个**通用 Video Domain Agent**。交付重点是 Agent 如何理解视频相关目标、调用受控工具、维护任务和结构化产物，而不是构建完整视频产品平台。
+本项目交付**通用 Video Domain Agent**及承载其与 Product、Landing Page、Copy、Ads 协作的**跨域编排层**。Video Agent 仍只负责视频领域；主 Workflow 负责领域依赖、并行、汇总、审批和恢复。跨域领域首版通过 Mock/Adapter 接入，不构建完整视频产品平台。
 
 ### 1.1 必须交付
 
@@ -21,12 +21,19 @@
 - Agent 路由、澄清、局部修改、预算、失败和恢复策略。
 - 单元、契约、集成、Agent Eval 和故障注入测试。
 - 可替换真实检索推荐服务的 Port/Adapter 边界，但真实服务不属于本次交付。
+- `CreativeProductionWorkflow`、跨域 Task/Step、依赖图和 fan-in。
+- `DomainInvocationPort`、跨域 Artifact Envelope、状态映射和幂等。
+- Product、Landing Page、Copy、Ads 领域契约及 Mock/Adapter。
+- 范围化用户审批、Artifact staleness、部分成功、补偿和跨域恢复。
+- Video Domain Agent 作为独立子工作流被主 Workflow 调用的边界。
 
 ### 1.2 不包含
 
 - AI 乘风引擎工作台、对话页面、画布、上传和前端交互。
-- 广告优化师、商品、投放、跟品、落地页、口播、爆款 Hook 等产品化业务。
-- Product Domain、Marketing Domain 和跨领域工作流。
+- Product、Landing Page、Copy、Ads 领域的真实业务实现。
+- 外部商品库、真实落地页生成、真实广告账户和自动发布。
+- 广告优化师、真实投放和外部平台运营工作簿。
+- 把跨域业务逻辑塞入 Video Domain Agent。
 - 真实视频入库、转码、切片、ASR、OCR、视觉理解、Embedding 和索引构建。
 - Elasticsearch、OpenSearch、Qdrant、Kafka 等真实检索基础设施交付。
 - 真实搜索引擎、推荐模型、排序模型、训练和 A/B 实验。
@@ -39,7 +46,11 @@
 
 上述能力可以作为未来扩展保留接口，但不得成为本次开发、Demo 或验收的阻断依赖。
 
-## 2. 领域对象只有 Video 和 Clip
+跨域编排的细节、领域职责和验收以 [跨域编排与领域子工作流设计](07_跨域编排与领域子工作流设计.md)为准。
+
+## 2. Video 领域对象只有 Video 和 Clip
+
+`Video -> Clip` 约束只适用于 Video 领域。跨域编排层和 Product、Landing Page、Copy、Ads 领域拥有各自的对象和 Schema，但不得把非视频对象伪装成 Video、Clip、Shot 或 Segment。
 
 ```mermaid
 flowchart TB
@@ -176,6 +187,10 @@ MaterialAssignment 将一个素材候选绑定到一个计划 Clip：
 - `FakeVideoCatalogPort`：固定 Video/Clip 数据。
 - `FakeRetrievalGateway`：覆盖 Search、Recommendation、Similar 和零结果。Recommendation 按 `clip_candidate` 所需的计划槽位、已覆盖 Clip 等上下文返回稳定候选。
 - `FakeEvidenceGateway`：返回固定证据摘要和预览引用。
+- `FakeProductDomain`：固定商品事实、市场、Offer 和 Claim。
+- `FakeLandingPageDomain`：固定页面、热区和诊断结果。
+- `FakeCopyDomain`：固定广告语、口播稿和 Claim 引用。
+- `FakeAdsDomain`：固定广告草稿、预算和审批状态。
 
 Mock 必须与正式 Port 使用相同 Schema。切换真实 Adapter 时，上层 Agent、Workflow 和业务代码不得修改。
 
@@ -190,12 +205,45 @@ Mock 必须与正式 Port 使用相同 Schema。切换真实 Adapter 时，上�
 Mock 行为最低要求：
 
 - 至少 1 个超时和 1 个非法 Tool 参数场景。
+- 至少 1 个领域失败但无依赖分支继续成功的场景。
+- 至少 1 个 Artifact stale 导致下游不可提交的场景。
+- 至少 1 个领域要求 `needs_user_action` 的场景。
+- 至少 1 个 Ads 草稿未经审批不可发布的场景。
 
-## 5. 完成定义
+## 5. 跨域编排对象
+
+跨域编排不改变 Video 素材层级。主 Workflow 持有以下 Artifact：
+
+- `campaign-brief`
+- `workflow-plan`
+- `product-context`
+- `landing-page-plan`
+- `copy-package`
+- `video-creative-artifact`
+- `ads-draft`
+- `review-package`
+
+统一 `Artifact Envelope` 至少包含：
+
+- `artifact_ref`
+- `artifact_type`
+- `owner_domain`
+- `content_schema`
+- `version`
+- `content_hash`
+- `status`
+- `parent_refs`
+- `validation_status`
+- `permission_scope`
+- `created_at`
+
+领域内部对象不嵌入其他领域实体。主 Workflow 只保存 Ref、hash、版本、状态和依赖边。
+
+## 6. 完成定义
 
 交付完成的必要条件是：
 
-1. 所有机器契约中只存在 `Video` 和 `Clip` 两级视频对象。
+1. 所有 Video 领域机器契约中只存在 `Video` 和 `Clip` 两级视频对象；跨域领域对象不进入该层级。
 2. 简单 Search、Recommendation 和 Similar 不启动 Agent，直接走 Mock Port；复杂搜索和创作任务进入 Agent。
 3. Agent 能生成 TaskBrief、CreativeBrief、Storyboard、ClipPlan 和 MaterialAssignment。
 4. Search、Recommendation 和 Similar 均通过 Mock Port 工作。
@@ -204,3 +252,9 @@ Mock 行为最低要求：
 7. Agent Eval 覆盖澄清、零结果、局部替换、工具失败和 Prompt Injection。
 8. 不依赖真实数据加工、媒体渲染、前端或外部平台即可完成端到端 Demo。
 9. Feedback 经 Mock Port 可写、可审计，且不依赖前端。
+10. 跨域请求由 `CreativeProductionWorkflow` 编排，Video Domain Agent 不调用其他领域。
+11. Product、Landing Page、Copy、Ads 通过 `DomainInvocationPort` 调用并有 Mock/Adapter。
+12. 主 Workflow 支持依赖并行、fan-in、部分成功、领域重试、Artifact stale 和恢复。
+13. Video-only 请求仍可直接使用 Video Workflow，不被跨域逻辑污染。
+14. 用户审批按领域和发布动作拆分，Ads 草稿不得自动发布。
+15. 无依赖领域失败时，其他领域结果保留且可继续交付。

@@ -3,28 +3,38 @@
 > **文档层级：** 可执行设计基线
 > **范围基线：** [交付范围与 Video/Clip 模型](00_交付范围与VideoClip模型.md)
 > **领域架构：** [Video Domain 架构](../03_VideoDomain架构设计.md)
+> **跨域编排：** [跨域编排与领域子工作流设计](07_跨域编排与领域子工作流设计.md)
 > **工程契约：** [工程契约与研发 Backlog](05_VideoDomainAgent_工程契约与研发Backlog.md)
 > **验收脚本：** [纵向切片与验收脚本](06_VideoDomainAgent_纵向切片与验收脚本.md)
 > **Runtime 基线：** Acore Runtime Java SDK `0.2.0` 文档/源码基线，目标环境需另行验收。
 
 ## 0. 执行摘要
 
-本方案交付一个通用 Video Domain Agent，采用“单主 Agent + 显式 Workflow + 受控 Tool + Mock 检索推荐”的模式。
+本方案交付一个通用 Video Domain Agent，并在其外围增加“主 Workflow + 领域子工作流 + 受控 Tool + Mock/Adapter”的跨域编排能力。
 
 ```text
 用户目标
   → Intent Router
      ├─ 简单 Search / Recommendation / Similar → Retrieval Port
-     └─ 复杂创作 → Video Domain Agent
+     ├─ Video-only 复杂创作 → Video Workflow → Video Domain Agent
+     └─ 跨域创作 → CreativeProductionWorkflow
+          → Product / Landing Page / Copy / Ads / Video DomainInvocation
           → TaskBrief / CreativeBrief / Storyboard / ClipPlan
           → 每个计划槽位至少有 Search 或 Recommendation 路径，Similar 按需调用
           → CandidateSet + Evidence
           → MaterialAssignment
           → 用户确认或局部修改
-          → 结构化 Artifact
+          → 版本化跨域 Artifact
 ```
 
-本次只交付 Agent 和执行契约，不交付完整视频平台。真实素材加工、ES/Qdrant、推荐模型、视频生成、渲染、导出、前端和跨领域业务均被 Mock 或保留为未来 Adapter。
+本次交付跨域编排契约和领域 Mock/Adapter，不交付完整视频平台或真实跨域业务系统。真实素材加工、ES/Qdrant、推荐模型、商品、落地页、文案、广告、视频生成、渲染、导出和前端均保留为未来 Adapter。
+
+关键边界：
+
+- `CreativeProductionWorkflow` 负责跨域依赖、并行、汇总、审批、部分成功和恢复。
+- Video Domain Agent 只负责视频领域。
+- Video Domain Agent 不直接调用 Product、Landing Page、Copy 或 Ads。
+- 跨域领域只通过 `DomainInvocationPort` 和 Artifact Ref 交换结果。
 
 视频领域只存在两个素材层级：
 
@@ -43,6 +53,10 @@
 - Search、Recommendation、Similar、Evidence 和 Feedback 的 Mock Port。
 - Storyboard、ClipPlan、ClipRequirement 和 MaterialAssignment。
 - 澄清、局部替换、零结果、工具失败和恢复。
+- CreativeProductionWorkflow、跨域 Task/Step、依赖图和 fan-in。
+- `DomainInvocationPort`、Artifact Envelope、领域状态映射和幂等。
+- Product、Landing Page、Copy、Ads 的 Mock/Adapter 与契约测试。
+- 领域部分成功、Artifact stale、范围化审批和跨域恢复。
 - Agent Eval、契约测试、故障注入和端到端 Demo。
 
 ### 1.2 不实现
@@ -52,7 +66,9 @@
 - Timeline IR、FFmpeg、Render、Export 和 NLE。
 - 视频生成、字幕、擦除、换画幅、配音和质量检测。
 - 视频版权、许可、商业用途、地域可用性和署名过滤。
-- 产品前端、商品、广告、投放、跟品和跨领域流程。
+- 产品前端、真实商品、页面、文案和广告平台实现。
+- 自动提交广告、修改线上落地页和真实投放操作。
+- 把跨域编排放进 Video Domain Agent。
 
 ### 1.3 系统不变量
 
@@ -64,6 +80,10 @@
 - Agent 只能调用当前 Step 白名单中的 Tool。
 - 所有有副作用的 Tool 必须幂等并记录 `tool_call_id`。
 - Runtime Run 状态不能直接替代 Task 状态。
+- 主 Workflow 是跨域编排唯一权威。
+- 领域间只交换 Artifact Ref 和版本化结果。
+- Video Domain Agent 不能调用 Product、Landing Page、Copy 或 Ads。
+- Ads 草稿与外部发布必须使用不同审批范围。
 
 ## 2. 总体架构
 
@@ -71,8 +91,15 @@
 flowchart TB
   API[Business API / SSE] --> ROUTER[Intent Router]
   ROUTER -->|简单 Search / Recommendation / Similar| PORT[Retrieval Port]
-  ROUTER -->|Complex| WF[Workflow Orchestrator]
-  WF <--> SDK[Runtime SDK Adapter]
+  ROUTER -->|Video-only Complex| VWF[Video Workflow]
+  ROUTER -->|Cross-domain| CWF[CreativeProductionWorkflow]
+  CWF --> DIP[DomainInvocationPort]
+  DIP --> PRODUCT[Product Domain]
+  DIP --> LANDING[Landing Page Domain]
+  DIP --> COPY[Copy Domain]
+  DIP --> ADS[Ads Domain]
+  DIP --> VWF
+  VWF <--> SDK[Runtime SDK Adapter]
   SDK <--> AGENT[Video Domain Agent Run]
   AGENT <--> TOOLS[Tool Registry + Policy]
   TOOLS --> RETRIEVAL[Mock Search / Recommendation / Similar]
@@ -87,7 +114,9 @@ flowchart TB
 |---|---|
 | Business API | 创建任务、查询状态、提交确认和接收 SSE |
 | Intent Router | 区分直接 Search、Recommendation、Similar 和复杂 Agent Task |
-| Workflow Orchestrator | 持有 Task、Plan、Step、Checkpoint 和恢复逻辑 |
+| CreativeProductionWorkflow | 持有跨域 Task、依赖图、并行、汇总、审批、Checkpoint 和恢复 |
+| Video Workflow | 持有 Video-only Task 和 Video 子工作流状态 |
+| DomainInvocationPort | 统一调用 Product、Landing Page、Copy、Ads 和 Video |
 | Runtime SDK Adapter | 封装认证、AgentSpec、Session、Run、Action 和 SSE |
 | Video Domain Agent | 澄清、创作判断、Tool 调用和结构化输出 |
 | Tool Registry | 注册名称、Schema、风险和幂等模式 |
@@ -95,13 +124,28 @@ flowchart TB
 | Retrieval Gateway | Mock 或未来的真实 Search/Recommend/Similar |
 | Composition Service | 生成 MaterialAssignment |
 | Artifact Registry | 保存版本、hash、lineage 和确认状态 |
+| Product / Landing Page / Copy / Ads Adapter | 领域 Mock 或未来真实服务 |
 
 ### 2.2 依赖方向
 
 ```text
 application-api
   → application-service
+
+application-service
+  → creative-workflows
   → video-workflows
+  → contracts
+
+creative-workflows
+  → domain-invocation
+  → contracts
+
+domain-invocation
+  → domain-contracts
+  → domain-clients
+
+video-workflows
   → video-agent
   → video-domain-core
   → contracts
@@ -118,6 +162,16 @@ video-agent-tools
 
 retrieval-client
   → MockRetrievalAdapter | FutureHttpRetrievalAdapter
+
+domain-clients
+  → VideoWorkflowAdapter
+  → MockProductAdapter | FutureProductAdapter
+  → MockLandingPageAdapter | FutureLandingPageAdapter
+  → MockCopyAdapter | FutureCopyAdapter
+  → MockAdsAdapter | FutureAdsAdapter
+
+VideoWorkflowAdapter
+  → video-workflows
 ```
 
 禁止：
@@ -126,6 +180,9 @@ retrieval-client
 - Agent 直接操作 Repository 或 Mock Fixture。
 - SDK 类型进入领域对象和数据库。
 - 前端通过拼接 Prompt 修改项目状态。
+- `video-agent` 依赖任何跨域领域模块。
+- 领域 Adapter 直接依赖主 Workflow 内部状态。
+- Video Domain Agent 直接持有跨域凭证或外部平台 Tool。
 
 ## 3. Runtime 与状态归属
 
@@ -139,7 +196,7 @@ stateDiagram-v2
   Planned --> Running: auto-approved
   AwaitingApproval --> Running: approved
   AwaitingApproval --> Cancelled: rejected
-  Running --> Waiting: awaiting_user / budget_exhausted
+  Running --> Waiting: awaiting_user / budget_exhausted / awaiting_domain / awaiting_approval
   Waiting --> Running: resume
   Waiting --> Cancelled: abandoned
   Waiting --> Failed: deadline exceeded
@@ -161,6 +218,8 @@ stateDiagram-v2
 
 ### 3.2 Workflow Step
 
+Video-only Workflow：
+
 ```text
 Task
  ├─ intent_and_brief
@@ -172,6 +231,22 @@ Task
  ├─ clip_materialize[sb_clip_003] ┘
  ├─ compose_assignments
  └─ await_user_confirmation
+```
+
+跨域 Workflow：
+
+```text
+CreativeTask
+ ├─ campaign_brief
+ ├─ product.resolve_product_context
+ ├─ video.analyze_and_search         ┐
+ ├─ landing.fetch_and_diagnose       ├─ parallel
+ ├─ copy.generate_package             ┘ after fan-in
+ ├─ video.plan_and_assign             ┐
+ ├─ landing.generate_plan             ├─ parallel
+ ├─ ads.prepare_draft                 ┘ after fan-in
+ ├─ review_package
+ └─ await_scoped_approval
 ```
 
 每个 Step 保存：
@@ -186,6 +261,9 @@ Task
 - `agent_id/spec_version`
 - `request_id/session_id/runtime_run_id`
 - `current_action_request_id`
+- `domain_invocation_id`
+- `depends_on_step_keys`
+- `join_policy`
 
 ## 4. Video / Clip 领域模型
 
@@ -285,6 +363,16 @@ ClipPlan 是创作计划，不是素材。每个 ClipRequirement 使用独立的
 
 ### 6.1 职责
 
+CreativeProductionWorkflow：
+
+- 生成 CampaignBrief 和跨域依赖图。
+- 选择需要的领域和产物。
+- 通过 `DomainInvocationPort` 发起、重试和取消领域调用。
+- 管理 fan-out、fan-in、部分成功、审批和 stale 传播。
+- 汇总跨域 ReviewPackage，不读取领域内部数据库。
+
+Video Domain Agent：
+
 - 抽取目标、时长、画幅、语言、风格和硬约束。
 - 判断信息是否充分。
 - 生成 CreativeBrief、Storyboard 和 ClipPlan。
@@ -292,6 +380,13 @@ ClipPlan 是创作计划，不是素材。每个 ClipRequirement 使用独立的
 - 比较小候选集并生成 Assignment 请求。
 - 处理零结果、工具失败、冲突和用户修改。
 - 在需要时请求用户确认。
+
+跨域领域默认通过 Mock/Adapter 接入：
+
+- Product 提供事实、市场和 Claim。
+- Landing Page 提供页面诊断和方案。
+- Copy 提供广告语和口播稿。
+- Ads 提供广告草稿、预算和审批前检查。
 
 ### 6.2 禁止行为
 
@@ -302,6 +397,8 @@ ClipPlan 是创作计划，不是素材。每个 ClipRequirement 使用独立的
 - 用聊天记录覆盖项目 Artifact。
 - 在 Tool 失败后无限重试。
 - 直接生成媒体命令、时间线或渲染文件。
+- 直接调用 Product、Landing Page、Copy 或 Ads。
+- 以“全能 Agent”身份创建广告、发布页面或修改投放预算。
 
 ### 6.3 System Prompt 结构
 
@@ -323,6 +420,8 @@ Prompt 中必须显式说明：
 - 不得把 Video 再拆成未定义的 Shot 或 Segment。
 - Clip 是唯一可引用片段。
 - 计划侧还必须区分 ClipRequirement 与素材 Clip。
+- 不得调用或推断 Product、Landing Page、Copy、Ads 的私有 Tool。
+- 只能使用主 Workflow 提供的只读 Context Snapshot。
 
 ### 6.4 工具循环
 
@@ -435,7 +534,19 @@ flowchart TB
   U -->|确认| OUT[确认版 Artifact]
 ```
 
-局部修改：
+### 8.1 Video-only 路径
+
+Video-only 路径保持本方案原有闭环，不受跨域编排侵入：
+
+```text
+Video Task
+  → Video Domain Agent
+  → TaskBrief / CreativeBrief / Storyboard / ClipPlan
+  → CandidateSet / MaterialAssignment
+  → 用户确认
+```
+
+### 8.2 局部修改
 
 1. 定位 `storyboard_clip_id` 和对应 `clip_plan_id`。
 2. 创建该计划 Clip 的新 Requirement 版本。
@@ -443,6 +554,33 @@ flowchart TB
 4. 生成新的 Assignment Set。
 5. 未受影响 Assignment 保持版本引用。
 6. 记录旧 Artifact 为被替代，不原地覆盖。
+
+### 8.3 跨域编排路径
+
+```text
+CreativeProductionWorkflow
+  → CampaignBrief / WorkflowPlan
+  → Product
+  → Video 分析、Landing Page 诊断并行
+  → Copy
+  → Video 素材计划、Landing Page 方案并行
+  → Ads 草稿
+  → ReviewPackage
+  → 范围化用户审批
+```
+
+执行规则：
+
+1. 主 Workflow 根据 `requested_outputs` 选择领域子图。
+2. 只把 Video 决策所需 Context Snapshot 传给 Video Workflow。
+3. Product、Landing Page、Copy、Ads 通过 `DomainInvocationPort` 调用。
+4. 领域结果以 Artifact Envelope 返回，不返回内部实体。
+5. 一个领域失败只阻塞其下游，其他并行分支继续。
+6. 上游 Artifact 新版本只标记真实依赖它的下游为 stale。
+7. 用户审批按领域和副作用范围拆分。
+8. Ads 草稿生成与外部发布是两个独立 Action。
+
+详细依赖图、契约和失败策略见 [跨域编排设计](07_跨域编排与领域子工作流设计.md)。
 
 ## 9. Material Composition
 
@@ -522,6 +660,20 @@ total = 0.75 * clip_fit + 0.25 * collection_fit
 - `POST /api/v1/retrieval/similar`
 - `POST /api/v1/retrieval/feedback`
 - `POST /api/v1/evidence/resolve`
+- `POST /api/v1/creative/projects`
+- `GET /api/v1/creative/projects/{projectId}`
+- `POST /api/v1/creative/projects/{projectId}/tasks`
+- `GET /api/v1/creative/tasks/{taskId}`
+- `GET /api/v1/creative/tasks/{taskId}/stream`
+- `GET /api/v1/creative/tasks/{taskId}/domains`
+- `GET /api/v1/creative/tasks/{taskId}/domains/{invocationId}`
+- `GET /api/v1/creative/artifacts/{artifactId}`
+- `GET /api/v1/creative/artifacts/{artifactId}/versions`
+- `POST /api/v1/creative/tasks/{taskId}/wait`
+- `POST /api/v1/creative/tasks/{taskId}/resume`
+- `POST /api/v1/creative/tasks/{taskId}/cancel`
+- `POST /api/v1/creative/tasks/{taskId}/confirmations`
+- `POST /api/v1/creative/tasks/{taskId}/publish`
 
 ### 10.2 Tool
 
@@ -538,6 +690,16 @@ total = 0.75 * clip_fit + 0.25 * collection_fit
 
 本次交付不注册 Render、Export、Media 或外部发布 Tool。
 
+跨域调用不是 Video Domain Agent Tool：
+
+```text
+CreativeProductionWorkflow
+  → DomainInvocationPort
+  → Product / Landing Page / Copy / Ads / Video Workflow
+```
+
+Product、Landing Page、Copy 和 Ads 不进入 Agent 的白名单。主 Workflow 是唯一合法的调用方。
+
 ## 11. 持久化与恢复
 
 ### 11.1 存储分工
@@ -546,6 +708,8 @@ total = 0.75 * clip_fit + 0.25 * collection_fit
 |---|---|
 | Project/Task/Step/Run 投影 | PostgreSQL |
 | Artifact 元数据和版本链 | PostgreSQL |
+| 跨域 Task/Step、DomainInvocation 和审批 | PostgreSQL |
+| 跨域 Artifact Index、依赖边和 stale 状态 | PostgreSQL |
 | CandidateSet、Storyboard、ClipPlan | JSON Artifact 或对象存储 + DB 引用 |
 | Mock Fixture | 版本化 JSON/代码资源 |
 | Agent 工作摘要 | 结构化 Context Snapshot |
@@ -560,6 +724,7 @@ total = 0.75 * clip_fit + 0.25 * collection_fit
 - 开放 Action 和 ToolCall ID。
 - 已完成 Step 和 Artifact 引用。
 - 剩余预算、重试次数和 deadline。
+- 领域 Step 依赖、`domain_invocation_id`、external task ref 和审批范围。
 
 恢复时先回读原 Run，再决定 attach、ActionDecision 或重新提交；响应不确定时不得自动创建替代 Run。
 
@@ -593,6 +758,13 @@ total = 0.75 * clip_fit + 0.25 * collection_fit
 - `recommendation.clicked`
 - `material.rejected`
 - `material.assigned/replaced/final_kept`
+- `workflow.plan.created`
+- `domain.invocation.started/completed/failed/cancelled`
+- `domain.artifact.published/staled`
+- `workflow.review.ready`
+- `creative.approval.required/decided`
+- `ads.draft.ready`
+- `publish.requested`
 
 ### 13.3 Agent Eval
 
@@ -607,10 +779,14 @@ total = 0.75 * clip_fit + 0.25 * collection_fit
 - Tool 超时和非法 Schema。
 - 预算耗尽和恢复。
 - Prompt Injection 不改变权限。
+- 跨域请求进入主 Workflow，而不是进入全能 Video Agent。
+- 领域失败只阻塞其下游，无依赖分支继续。
+- Artifact stale 阻止 Ads 草稿被标记为可发布。
+- Video Agent 不产生 Product、Landing Page、Copy 或 Ads Artifact。
 
 ## 14. 开发与测试计划
 
-实施阶段以 [实施路线图](03_实施路线图与验收基线.md) 的阶段 0–4 为唯一编号权威。本节只做对照，不再平行编号。
+实施阶段以 [实施路线图](03_实施路线图与验收基线.md) 的阶段 0–6 为唯一编号权威。本节只做对照，不再平行编号。
 
 | `implementation/03` 阶段 | 本节工作内容 |
 |---|---|
@@ -619,6 +795,8 @@ total = 0.75 * clip_fit + 0.25 * collection_fit
 | 阶段 2：Runtime 与 Video Domain Agent | Intent Router、AgentSpec、Runtime SDK Adapter、LocalToolset、Action 和 SSE；复杂请求走 Agent，简单请求绕过 |
 | 阶段 3：Creative Workflow 与 Assignment | CreativeBrief、Storyboard、ClipPlan、并行检索、Composition、用户锁定/替换/确认 |
 | 阶段 4：Eval、安全与交付 | Agent Eval、故障注入、可观测性、交付文档和 Demo；[验收表](06_VideoDomainAgent_纵向切片与验收脚本.md)全部通过 |
+| 阶段 5：跨域契约与 Mock | CreativeWorkflow、DomainInvocationPort、Artifact Envelope、四个领域 Mock |
+| 阶段 6：依赖执行与验收 | fan-out/fan-in、partial、stale、审批、恢复和跨域 Eval |
 
 ### 测试分层
 
@@ -627,10 +805,11 @@ total = 0.75 * clip_fit + 0.25 * collection_fit
 - 集成：Agent → Tool → Mock Retrieval → Artifact。
 - Eval：澄清、零结果、局部替换和恢复。
 - 故障：超时、非法参数、重复候选、SSE 断线、重复确认。
+- 跨域：领域依赖、并行、部分成功、Artifact stale、领域失败、审批和外部副作用门禁。
 
 ## 15. 最终验收标准
 
-1. 代码和契约中不存在 Shot、Segment 或第二套视频层级。
+1. Video 领域代码和契约中不存在 Shot、Segment 或第二套视频层级。
 2. Video/Clip 关系、时间区间和来源可校验。
 3. 简单 Search、Recommendation 和 Similar 不启动 Agent。
 4. Agent 能生成 TaskBrief、CreativeBrief、Storyboard、ClipPlan 和 MaterialAssignment。
@@ -642,6 +821,11 @@ total = 0.75 * clip_fit + 0.25 * collection_fit
 10. Prompt Injection 和租户隔离测试通过。
 11. 不依赖真实索引、媒体渲染、前端或外部平台即可完成 Demo。
 12. Feedback 经 Mock Port 可写、可审计，且不依赖前端。
+13. `cross_domain_campaign` 由主 Workflow 持有，Video Agent 只处理 Video 子步骤。
+14. Product、Landing Page、Copy、Ads 通过 `DomainInvocationPort` 和 Artifact Ref 交换结果。
+15. 领域并行、fan-in、部分成功、stale、审批和恢复可重复验证。
+16. Video-only 路径与跨域路径互不影响。
+17. Ads 草稿不得自动发布，发布需要独立用户审批。
 
 ## 16. 架构决策摘要
 
@@ -657,3 +841,7 @@ total = 0.75 * clip_fit + 0.25 * collection_fit
 | VDA-ADR-08 | 身份、项目范围和 Tool 权限由 Policy Gateway 强制 |
 | VDA-ADR-09 | 本次不交付媒体执行和真实索引 |
 | VDA-ADR-10 | 所有 Adapter 共享 Schema 和 Contract Test |
+| VDA-ADR-11 | 跨域编排由 CreativeProductionWorkflow 持有 |
+| VDA-ADR-12 | Video Domain Agent 不调用其他领域 |
+| VDA-ADR-13 | 领域通过 DomainInvocationPort 和 Artifact Envelope 交换结果 |
+| VDA-ADR-14 | 领域实现首版为 Mock/Adapter，外部发布必须独立审批 |

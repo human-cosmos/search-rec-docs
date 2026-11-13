@@ -1,9 +1,9 @@
 # Video Domain Agent 工程契约与研发 Backlog
 
-> **状态：** Mock-first 工程基线，2026-11-12。
-> **范围：** 只交付通用 Video Domain Agent。
+> **状态：** Mock-first 工程基线，2026-11-13。
+> **范围：** Video Domain Agent 与跨域编排契约。
 > **模型：** `Video -> Clip`，计划侧使用 `ClipPlan / ClipRequirement`。
-> **依据：** [交付范围与模型基线](00_交付范围与VideoClip模型.md)、[API 与数据契约](01_API与数据契约.md)、[详细设计](04_VideoDomainAgent_详细设计与实施手册.md)。
+> **依据：** [交付范围与模型基线](00_交付范围与VideoClip模型.md)、[跨域编排设计](07_跨域编排与领域子工作流设计.md)、[API 与数据契约](01_API与数据契约.md)、[详细设计](04_VideoDomainAgent_详细设计与实施手册.md)。
 > **公开 API：** 形状以 `implementation/01` 为准；本文 §5 / §6 是工程摘录，只保留工程增量。
 
 ## 1. 工程目标
@@ -14,7 +14,8 @@
 2. Video、Clip、CandidateSet、ClipPlan、Assignment 和 Agent 执行的数据合同。
 3. Mock 检索推荐与未来真实 Adapter 的共同 Port。
 4. Task/Artifact/Tool/Recovery 的持久化结构。
-5. 本次交付的 Ticket、完成标准和验收证据。
+5. Cross-domain Workflow、DomainInvocation、Artifact 交换和审批。
+6. 本次交付的 Ticket、完成标准和验收证据。
 
 ## 2. 交付边界
 
@@ -27,6 +28,10 @@
 - Feedback Mock（经 RetrievalGateway 可写、可审计，不依赖前端）。
 - Storyboard、ClipPlan、ClipRequirement、MaterialAssignment。
 - Tool Registry、Policy Gateway、幂等和审计。
+- CreativeProductionWorkflow、Task/Step 依赖图和 fan-in。
+- `DomainInvocationPort`、Artifact Envelope、领域 Mock/Adapter。
+- Product、Landing Page、Copy、Ads 领域契约和结果引用。
+- 部分成功、Artifact stale、范围化审批和跨域恢复。
 - Agent Eval 与 Mock 端到端验收。
 
 ### 2.2 不实现
@@ -35,7 +40,8 @@
 - 推荐训练、真实 Ranker 和线上实验。
 - Timeline、Render、Export、NLE、视频生成和媒体处理。
 - 视频版权、许可、商业用途、地域可用性和署名过滤。
-- 前端工作台、商品、广告、投放、跟品和跨领域业务。
+- 前端工作台、真实商品、真实落地页、真实广告平台和自动发布。
+- 把跨域业务逻辑放进 Video Domain Agent。
 - 个人资产、公共素材库和保护期。
 
 ## 3. Monorepo 与模块
@@ -45,6 +51,7 @@ video-domain-agent/
 ├── contracts/
 │   ├── openapi/video-api.yaml
 │   ├── openapi/retrieval-api.yaml
+│   ├── openapi/creative-api.yaml
 │   ├── schemas/
 │   │   ├── video.v1.schema.json
 │   │   ├── clip.v1.schema.json
@@ -55,8 +62,13 @@ video-domain-agent/
 │   │   ├── search-plan.v1.schema.json
 │   │   ├── candidate-set.v1.schema.json
 │   │   ├── material-assignment.v1.schema.json
+│   │   ├── campaign-brief.v1.schema.json
+│   │   ├── workflow-plan.v1.schema.json
+│   │   ├── domain-invocation.v1.schema.json
+│   │   ├── artifact-envelope.v1.schema.json
 │   │   └── agent-event.v1.schema.json
-│   └── tools/video-tools.v1.yaml
+│   ├── tools/video-tools.v1.yaml
+│   └── domains/domain-operations.v1.yaml
 ├── app/
 │   ├── application-api/
 │   ├── application-service/
@@ -69,6 +81,12 @@ video-domain-agent/
 │   ├── workflow-engine/
 │   ├── policy-gateway/
 │   └── tool-registry/
+├── creative-orchestration/
+│   ├── creative-workflows/
+│   ├── workflow-planning/
+│   ├── domain-invocation/
+│   ├── domain-contracts/
+│   └── domain-clients/
 ├── video-domain/
 │   ├── video-domain-core/
 │   ├── video-agent/
@@ -81,19 +99,35 @@ video-domain-agent/
 ├── mocks/
 │   ├── fixture-catalog/
 │   ├── fake-retrieval/
-│   └── fake-evidence/
+│   ├── fake-evidence/
+│   ├── fake-product/
+│   ├── fake-landing-page/
+│   ├── fake-copy/
+│   └── fake-ads/
 ├── test-support/
 └── docs/
 ```
 
 `fake-retrieval/` 覆盖 Search、Recommendation、Similar 和 Feedback，是同一 `RetrievalGateway` 的实现目录，不得另立 Recommendation Port。`retrieval-client` 与 `project-client` 是对已注册 Port / 公开 API 的调用封装，不是新的 Port。
 
+`creative-orchestration` 只依赖 `DomainInvocationPort`、Artifact Envelope 和领域操作 Schema。`domain-clients` 不向主 Workflow 暴露领域内部 DTO。
+
 ### 3.1 依赖
 
 ```text
 application-api
   → application-service
+
+creative-workflows
+  → domain-invocation
+  → contracts
+
+application-service
+  → creative-workflows
   → video-workflows
+  → contracts
+
+video-workflows
   → video-agent
   → video-domain-core
   → contracts
@@ -111,6 +145,18 @@ video-agent-tools
 mocks
   → contracts
   → retrieval-client
+
+domain-invocation
+  → domain-contracts
+  → domain-clients
+
+domain-clients
+  → VideoWorkflowAdapter
+  → MockProduct | MockLandingPage | MockCopy | MockAds
+  → Future HTTP/gRPC Adapters
+
+VideoWorkflowAdapter
+  → video-workflows
 ```
 
 禁止：
@@ -119,6 +165,9 @@ mocks
 - Mock Adapter 直接调用 Agent 或写项目数据库。
 - Agent 直接连接数据库、Fixture 或文件系统。
 - Retrieval 反向依赖视频 Workflow。
+- `video-agent` 依赖 Product、Landing Page、Copy 或 Ads 模块。
+- 领域 Adapter 依赖主 Workflow 状态或读取其他领域数据库。
+- 跨域领域把内部 DTO 返回到主 Workflow。
 
 ## 4. 配置基线
 
@@ -143,6 +192,18 @@ retrieval:
 composition:
   shortlist_per_clip: 10
   max_alternatives_per_clip: 3
+orchestration:
+  max_parallel_domains: 4
+  domain_timeout_ms: 30000
+  max_domain_retries: 2
+  partial_result_policy: allow_with_gaps
+  require_publish_approval: true
+domains:
+  product: mock
+  landing_page: mock
+  copy: mock
+  ads: mock
+  video: internal
 mock:
   fixture_version: video-clip-v1
   timeout_query: "mock-timeout"
@@ -240,6 +301,27 @@ GET /api/v1/video/agent-runs/{runId}/events?after_sequence=120
 ```
 
 响应同时返回领域 `run_id` 和 Runtime `runtime_run_id`。
+
+### 5.6 Creative Production
+
+```http
+POST /api/v1/creative/projects
+GET  /api/v1/creative/projects/{projectId}
+POST /api/v1/creative/projects/{projectId}/tasks
+GET  /api/v1/creative/tasks/{taskId}
+GET  /api/v1/creative/tasks/{taskId}/stream
+GET  /api/v1/creative/tasks/{taskId}/domains
+GET  /api/v1/creative/tasks/{taskId}/domains/{invocationId}
+GET  /api/v1/creative/artifacts/{artifactId}
+GET  /api/v1/creative/artifacts/{artifactId}/versions
+POST /api/v1/creative/tasks/{taskId}/wait
+POST /api/v1/creative/tasks/{taskId}/resume
+POST /api/v1/creative/tasks/{taskId}/cancel
+POST /api/v1/creative/tasks/{taskId}/confirmations
+POST /api/v1/creative/tasks/{taskId}/publish
+```
+
+跨域 API 由 `CreativeProductionWorkflow` 处理；Video-only API 仍由 §5.2 处理。请求、响应和领域状态以 [跨域编排设计](07_跨域编排与领域子工作流设计.md) §8 / §11 为准。
 
 ## 6. Retrieval API
 
@@ -403,6 +485,25 @@ public interface CompositionEngine {
     );
 }
 
+public interface DomainInvocationPort {
+    DomainInvocationResult invoke(
+        TenantContext context,
+        ProjectContext project,
+        DomainInvocationRequest request
+    );
+
+    DomainInvocationResult get(
+        TenantContext context,
+        String invocationId
+    );
+
+    DomainInvocationResult cancel(
+        TenantContext context,
+        String invocationId,
+        String reason
+    );
+}
+
 public interface AgentRuntimePort {
     RuntimeRunRef start(
         TenantContext context,
@@ -439,6 +540,11 @@ public interface AgentRuntimePort {
 | ProjectArtifactStore | PostgreSQL | unchanged |
 | CompositionEngine | deterministic rules | learned composition |
 | AgentRuntimePort | SDK + Fake Runtime | target Runtime |
+| DomainInvocationPort | in-process fake domains | Product/Landing/Copy/Ads HTTP/gRPC |
+| ProductDomain | `FakeProductDomain` | Product service |
+| LandingPageDomain | `FakeLandingPageDomain` | Landing Page service |
+| CopyDomain | `FakeCopyDomain` | Copy service |
+| AdsDomain | `FakeAdsDomain` | Ads service |
 
 所有 Adapter 运行同一 Port Contract Test。
 
@@ -681,6 +787,50 @@ public interface AgentRuntimePort {
 }
 ```
 
+### 8.8 Cross-domain Artifact Envelope
+
+```json
+{
+  "schema_version": "1.0",
+  "artifact_id": "art_copy_001",
+  "artifact_ref": "artifact://copy-package/copy_001/v1",
+  "artifact_type": "copy-package",
+  "owner_domain": "copy",
+  "content_schema": "urn:copy:package:1.0",
+  "version": 1,
+  "content_hash": "sha256:9e20f2...",
+  "status": "ready",
+  "parent_refs": [
+    "artifact://product-context/pc_001/v1"
+  ],
+  "validation_status": "passed",
+  "permission_scope": "project:project_001",
+  "created_at": "2026-11-13T10:00:00Z"
+}
+```
+
+### 8.9 DomainInvocationResult
+
+```json
+{
+  "schema_version": "1.0",
+  "invocation_id": "di_copy_001",
+  "task_id": "task_001",
+  "domain": "copy",
+  "operation": "generate_copy_package",
+  "status": "succeeded",
+  "output_refs": [
+    "artifact://copy-package/copy_001/v1"
+  ],
+  "warnings": [],
+  "error": null,
+  "usage": {"units": 2},
+  "external_task_ref": null
+}
+```
+
+领域内部 DTO 不进入本节共享 Schema。完整领域操作以 `contracts/domains/domain-operations.v1.yaml` 和 [跨域编排设计](07_跨域编排与领域子工作流设计.md)为准。
+
 ## 9. Tool 契约
 
 ### 9.1 Descriptor
@@ -719,6 +869,8 @@ public interface AgentRuntimePort {
 | `create_artifact_draft` | `video.artifact.write` | L1 |
 | `assign_materials` | `video.composition.assign` | L1 |
 | `request_user_confirmation` | `video.task.wait` | L1 |
+
+Product、Landing Page、Copy、Ads 和 `DomainInvocationPort` 均不得注册到 Video Domain Agent。跨域调用只允许由 `CreativeProductionWorkflow` 发起。
 
 ### 9.3 幂等
 
@@ -834,7 +986,10 @@ CREATE TABLE video_artifact (
   tenant_id        varchar(64) NOT NULL,
   project_id       varchar(64) NOT NULL,
   task_id          varchar(64),
+  owner_domain     varchar(32) NOT NULL DEFAULT 'video'
+                   CHECK (owner_domain = 'video'),
   artifact_type    varchar(64) NOT NULL,
+  content_schema   varchar(160) NOT NULL,
   schema_version   varchar(16) NOT NULL,
   version          integer NOT NULL,
   status           varchar(32) NOT NULL,
@@ -843,6 +998,7 @@ CREATE TABLE video_artifact (
   content_json     jsonb,
   content_hash     char(64) NOT NULL,
   producer_run_id  varchar(64),
+  producer_invocation_id varchar(64),
   producer_tool    varchar(100),
   validation_status varchar(32) NOT NULL,
   created_by       varchar(64) NOT NULL,
@@ -1130,6 +1286,152 @@ CREATE TABLE video_feedback_event (
 
 `video_feedback_event` 是 Feedback 的落表，不复用 `video_agent_event`。Direct 路径允许 `task_id` 为空；Agent / 任务路径应填写 `task_id`。字段与 [API 与数据契约](01_API与数据契约.md) §4.6 对齐。
 
+### 10.10 Cross-domain Workflow
+
+```sql
+CREATE TABLE creative_project (
+  project_id       varchar(64) PRIMARY KEY,
+  tenant_id        varchar(64) NOT NULL,
+  owner_user_id    varchar(64) NOT NULL,
+  name             varchar(200) NOT NULL,
+  goal             text NOT NULL,
+  status           varchar(32) NOT NULL,
+  constraints_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  row_version      integer NOT NULL DEFAULT 1,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE creative_task (
+  task_id          varchar(64) PRIMARY KEY,
+  tenant_id        varchar(64) NOT NULL,
+  project_id       varchar(64) NOT NULL REFERENCES creative_project(project_id),
+  created_by       varchar(64) NOT NULL,
+  workflow_type    varchar(32) NOT NULL
+                   CHECK (workflow_type IN ('video_only','cross_domain_campaign')),
+  goal             text NOT NULL,
+  status           varchar(32) NOT NULL,
+  waiting_reason   varchar(32)
+                   CHECK (waiting_reason IS NULL OR waiting_reason IN
+                     ('awaiting_user','budget_exhausted','awaiting_domain','awaiting_approval')),
+  workflow_plan_id varchar(64),
+  row_version      integer NOT NULL DEFAULT 1,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE creative_task_step (
+  step_id              varchar(80) PRIMARY KEY,
+  tenant_id            varchar(64) NOT NULL,
+  task_id              varchar(64) NOT NULL REFERENCES creative_task(task_id),
+  step_key             varchar(120) NOT NULL,
+  step_type            varchar(32) NOT NULL
+                       CHECK (step_type IN ('domain_invocation','fan_out','fan_in','approval','revision')),
+  domain               varchar(32)
+                       CHECK (domain IS NULL OR domain IN
+                         ('product','landing_page','copy','ads','video')),
+  operation            varchar(100),
+  status               varchar(32) NOT NULL,
+  depends_on_json      jsonb NOT NULL DEFAULT '[]'::jsonb,
+  input_refs_json      jsonb NOT NULL DEFAULT '[]'::jsonb,
+  output_refs_json     jsonb NOT NULL DEFAULT '[]'::jsonb,
+  join_policy          varchar(32),
+  attempt              integer NOT NULL DEFAULT 0,
+  max_attempts         integer NOT NULL DEFAULT 2,
+  idempotency_key      varchar(200) NOT NULL,
+  timeout_ms           integer NOT NULL,
+  budget_json          jsonb NOT NULL DEFAULT '{}'::jsonb,
+  row_version          integer NOT NULL DEFAULT 1,
+  created_at           timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, task_id, step_key)
+);
+
+CREATE TABLE domain_invocation (
+  invocation_id       varchar(64) PRIMARY KEY,
+  tenant_id           varchar(64) NOT NULL,
+  task_id             varchar(64) NOT NULL REFERENCES creative_task(task_id),
+  step_id             varchar(80) NOT NULL REFERENCES creative_task_step(step_id),
+  domain              varchar(32) NOT NULL
+                      CHECK (domain IN ('product','landing_page','copy','ads','video')),
+  operation           varchar(100) NOT NULL,
+  request_hash        char(64) NOT NULL,
+  idempotency_key     varchar(200) NOT NULL,
+  status              varchar(32) NOT NULL
+                      CHECK (status IN ('started','succeeded','partial','needs_user_action','failed','cancelled')),
+  external_task_ref   varchar(256),
+  output_refs_json    jsonb NOT NULL DEFAULT '[]'::jsonb,
+  warnings_json       jsonb NOT NULL DEFAULT '[]'::jsonb,
+  error_code          varchar(64),
+  attempt             integer NOT NULL DEFAULT 0,
+  deadline_at         timestamptz,
+  started_at          timestamptz,
+  finished_at         timestamptz,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, idempotency_key)
+);
+
+CREATE TABLE creative_artifact_index (
+  artifact_id         varchar(64) PRIMARY KEY,
+  artifact_ref        varchar(256) NOT NULL UNIQUE,
+  tenant_id           varchar(64) NOT NULL,
+  project_id          varchar(64) NOT NULL,
+  task_id             varchar(64) REFERENCES creative_task(task_id),
+  owner_domain        varchar(32) NOT NULL
+                      CHECK (owner_domain IN ('orchestration','product','landing_page','copy','ads','video')),
+  artifact_type       varchar(64) NOT NULL,
+  content_schema      varchar(160) NOT NULL,
+  version             integer NOT NULL,
+  content_hash        varchar(80) NOT NULL,
+  status              varchar(32) NOT NULL,
+  parent_refs_json    jsonb NOT NULL DEFAULT '[]'::jsonb,
+  validation_status   varchar(32) NOT NULL,
+  permission_scope    varchar(200) NOT NULL,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  staled_at           timestamptz
+);
+
+CREATE TABLE creative_artifact_edge (
+  from_ref         varchar(256) NOT NULL REFERENCES creative_artifact_index(artifact_ref),
+  to_ref           varchar(256) NOT NULL REFERENCES creative_artifact_index(artifact_ref),
+  relation          varchar(32) NOT NULL,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (from_ref, to_ref, relation)
+);
+
+CREATE TABLE creative_approval (
+  approval_id       varchar(64) PRIMARY KEY,
+  tenant_id         varchar(64) NOT NULL,
+  task_id           varchar(64) NOT NULL REFERENCES creative_task(task_id),
+  scope             varchar(64) NOT NULL
+                    CHECK (scope IN ('video_plan','copy','landing_page','ads_draft','publish')),
+  scope_hash        char(64) NOT NULL,
+  status            varchar(32) NOT NULL
+                    CHECK (status IN ('required','approved','rejected','cancelled')),
+  decided_by        varchar(64),
+  decided_at        timestamptz,
+  properties_json   jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, task_id, scope, scope_hash)
+);
+
+CREATE TABLE creative_task_event (
+  event_id            varchar(64) PRIMARY KEY,
+  tenant_id           varchar(64) NOT NULL,
+  task_id             varchar(64) NOT NULL REFERENCES creative_task(task_id),
+  sequence            bigint NOT NULL,
+  step_id             varchar(80),
+  domain_invocation_id varchar(64),
+  event_type          varchar(64) NOT NULL,
+  payload_json        jsonb NOT NULL,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, task_id, sequence)
+);
+```
+
+`creative_artifact_index` 只保存跨域引用，不复制领域内容。Video 内部 Artifact 仍由 `video_artifact` 保存，并通过相同 `artifact_ref` 或 Artifact ID 建立关联。
+
+`creative_task_event` 是跨域 SSE 和数据重放的权威事件表；领域内部事件仍由领域服务保存，并通过 `DomainInvocationResult` 投影。
+
 ## 11. Mock 契约
 
 固定 Fixture：
@@ -1157,6 +1459,23 @@ Mock 约束：
 - 同一输入和 `fixture_version` 返回同一排序。
 - Evidence 和 Candidate 使用正式 Schema。
 
+跨域 Mock：
+
+| Mock | 固定输出 | 故障场景 |
+|---|---|---|
+| `FakeProductDomain` | `product-context`、Offer、Claims | Claim 冲突、商品不可用 |
+| `FakeLandingPageDomain` | `landing-page-plan`、热区摘要 | 页面抓取超时、输入 stale |
+| `FakeCopyDomain` | `copy-package`、口播稿、CTA | 敏感 Claim 拒绝、部分候选 |
+| `FakeAdsDomain` | `ads-draft`、预算和审批状态 | 预算不足、未审批 publish |
+
+所有领域 Mock 必须：
+
+- 通过 `DomainInvocationPort` 调用。
+- 返回 `DomainInvocationResult` 和 Artifact Envelope。
+- 不返回领域内部数据库对象。
+- 对同一 `invocation_id + input_hash` 返回稳定结果。
+- 支持 `mock-domain-timeout` 和 `mock-domain-partial`。
+
 ## 12. 状态与幂等
 
 ### 12.1 乐观锁
@@ -1174,14 +1493,24 @@ WHERE task_id = :task_id
 
 影响行数为 0 时返回 `409 STATE_CONFLICT`。
 
+跨域任务使用同样的乐观锁规则更新 `creative_task` 和 `creative_task_step`。DomainInvocation 的终态不得覆盖为 `started`。
+
 ### 12.2 Step 幂等
 
 `idempotency_key = hash(tenant_id, task_id, step_key, input_artifact_hashes, action_version)`。
+
+领域调用幂等键：
+
+```text
+hash(tenant_id, task_id, step_key, domain, operation,
+     input_artifact_hashes, contract_version)
+```
 
 - `succeeded` 返回已有输出。
 - `running` 未超时返回当前状态。
 - 超时后按 attempt 和租约策略接管。
 - `failed` 仅在可重试时增加 attempt。
+- `partial` 保留已完成 Artifact，但不得自动标记 ReviewPackage 为 ready。
 
 ### 12.3 Runtime 恢复
 
@@ -1243,9 +1572,26 @@ WHERE task_id = :task_id
 | VDA-029 | 故障演练 | 超时/断连/权限 | 脚本全部通过 |
 | VDA-030 | Demo 与 Runbook | 启动、重启、演示 | 新工程师可独立运行 |
 
+### 13.5 P4：跨域编排与领域 Mock
+
+| ID | Ticket | 交付 | DoD |
+|---|---|---|---|
+| CDO-001 | Cross-domain Contracts | DomainInvocation、Artifact Envelope、Operation Schema | Schema 与版本测试通过 |
+| CDO-002 | Creative Task/Step DDL | Project、Task、Step、Invocation、Artifact Index | 迁移与回滚通过 |
+| CDO-003 | DomainInvocationPort | invoke/get/cancel + Policy | 幂等、权限、超时测试通过 |
+| CDO-004 | Fake Product Domain | ProductContext + Claims | Claim 冲突和不可用场景通过 |
+| CDO-005 | Fake Landing Page Domain | LandingPagePlan + diagnosis | 超时和 stale 输入通过 |
+| CDO-006 | Fake Copy Domain | CopyPackage + voiceover | 部分候选与 Claim 拒绝通过 |
+| CDO-007 | Fake Ads Domain | AdsDraft | 预算不足和未审批发布拦截通过 |
+| CDO-008 | Creative Workflow Planning | CampaignBrief + WorkflowPlan | requested_outputs 影响依赖图 |
+| CDO-009 | Fan-out / Fan-in / Partial | 并行执行与缺口汇总 | 领域失败不阻塞无依赖分支 |
+| CDO-010 | Artifact Stale | 依赖边与发布门禁 | stale Artifact 不可进入 Ads ready |
+| CDO-011 | Scoped Approval | 五类审批与 publish Action | 不允许跨 scope 复用审批 |
+| CDO-012 | Cross-domain Eval | 双路径与故障固定集 | 全部用例自动回归 |
+
 ## 14. Sprint
 
-Sprint 只是排期切片，阶段编号以 [实施路线图](03_实施路线图与验收基线.md) 的阶段 0–4 为准。
+Sprint 只是排期切片，阶段编号以 [实施路线图](03_实施路线图与验收基线.md) 的阶段 0–6 为准。
 
 | Sprint | 对应阶段 | 目标 | Ticket |
 |---|---|---|---|
@@ -1253,7 +1599,9 @@ Sprint 只是排期切片，阶段编号以 [实施路线图](03_实施路线图
 | S2 | 阶段 1 | Search/Recommend/Similar | 011–015 |
 | S3 | 阶段 2 | Runtime、Agent、Tool | 016–020 |
 | S4 | 阶段 3 | Creative Workflow | 021–024 |
-| S5 | 阶段 3–4 | Composition、Eval、Demo | 025–030 |
+| S5 | 阶段 3–4 | Composition、Eval、Video Demo | 025–030 |
+| S6 | 阶段 5 | Cross-domain 契约、Mock 领域 | CDO-001–007 |
+| S7 | 阶段 6 | Workflow、审批、跨域 Eval | CDO-008–012 |
 
 ## 15. Definition of Ready
 
@@ -1262,6 +1610,9 @@ Sprint 只是排期切片，阶段编号以 [实施路线图](03_实施路线图
 - 租户、项目权限和 Tool 风险明确。
 - 幂等和恢复方式明确。
 - Agent 版本、Tool binding 和 Action 处理明确。
+- 领域 operation、输入输出 Schema、Artifact owner 和版本明确。
+- 跨域依赖、join policy、部分成功和 stale 规则明确。
+- 外部副作用和审批 scope 明确。
 - 成功、零结果、超时、非法参数和权限失败用例齐备。
 
 ## 16. Definition of Done
@@ -1272,8 +1623,12 @@ Sprint 只是排期切片，阶段编号以 [实施路线图](03_实施路线图
 - Runtime Adapter 有版本、Run、Action、SSE 和 Tool 批次测试。
 - 所有 Artifact 可校验 Schema 和 lineage。
 - 新事件进入 Event Catalog。
-- 不出现 Shot、Segment 或其他视频层级。
-- 不引入真实检索、媒体渲染、前端或跨领域依赖。
+- Video 领域不出现 Shot、Segment 或其他视频层级。
+- Video Domain Agent 不依赖任何跨域领域模块。
+- 不引入真实检索、媒体渲染、前端或真实领域实现。
+- 跨域调用只经 `DomainInvocationPort`，不存在领域间直连。
+- 所有领域 Artifact 有 owner、schema、版本、hash 和 stale 规则。
+- Video-only 和 cross-domain 双路径有回归测试。
 
 ## 17. 交付物
 
@@ -1283,5 +1638,8 @@ Sprint 只是排期切片，阶段编号以 [实施路线图](03_实施路线图
 - Fake Search/Recommend/Similar/Evidence。
 - Video Domain AgentSpec 和 Prompt。
 - Workflow、Artifact、Assignment 和 SSE。
+- CreativeProductionWorkflow、DomainInvocationPort 和跨域 Artifact Index。
+- Product、Landing Page、Copy、Ads Mock。
+- 跨域依赖图、部分成功、stale、范围化审批和发布门禁。
 - 契约、集成、Eval、故障注入测试。
 - 启动、恢复、取消和演示 Runbook。

@@ -8,7 +8,7 @@
 
 **文档基线：** 2026-11-12 根据 Acore Runtime Java SDK 文档（`runtime-sdk/java/overview.md`、`runtime-sdk/java/api-reference.md`）和 Java 示例工程（`java-examples/README.md`）完成对照。这些路径是外部基线，**本仓库不收录**。
 
-> **本次交付约束：** 本项目只接入一个 Video Domain Agent。平台跨领域协作、Product/Marketing Agent、真实 URRE 服务、视频生成和媒体执行均不在交付范围；本文中的相关章节仅作为 Runtime 通用边界参考。
+> **本次交付约束：** 本项目交付一个 Video Domain Agent，以及平台级 `CreativeProductionWorkflow` 跨域编排契约。Product、Landing Page、Copy、Ads 首版通过 Mock/Adapter 接入；真实领域系统、真实 URRE 服务、视频生成和媒体执行仍不在交付范围。
 
 ---
 
@@ -94,11 +94,12 @@ flowchart LR
 
 Router 可依据任务类型、复杂度、风险等级、延迟预算和用户授权决定路径。不能仅以“用户输入很长”判断复杂度。
 
-### 3.1 Platform Agent 与领域 Agent
+### 3.1 主 Workflow 与领域 Agent
 
-- **Platform Agent** 是跨领域任务的默认主协调能力，负责目标确认、领域识别、任务路由、工具边界和跨领域 Artifact 交接。
-- **Video Domain Agent** 是本次唯一交付的领域 Agent，负责创作目标、ClipPlan、领域能力调度和用户确认，不重复承担平台级身份、租户和通用任务治理。
-- 单一视频请求可以直接进入 Video Domain Agent 或业务 API；本次不实现跨领域 Platform Agent。
+- **CreativeProductionWorkflow** 是跨领域任务的默认编排者，负责目标确认、WorkflowPlan、领域调用、并行、fan-in、审批和 Artifact 交接。它不是拥有全部领域 Tool 的“全能 Agent”。
+- **Video Domain Agent** 是独立领域 Agent，负责创作目标、ClipPlan、领域能力调度和用户确认，不重复承担平台级身份、租户、跨域依赖和通用任务治理。
+- 单一视频请求可以进入 Video Workflow；跨域请求由 CreativeProductionWorkflow 通过 `DomainInvocationPort` 调用领域。
+- 如引入语义 Planner，它只能生成 CampaignBrief/WorkflowPlan，不能直接执行 Product、Landing Page、Copy、Ads 或发布 Tool。
 - Search Planner 默认是复杂查询中的受约束 Planner，Recommendation Strategy 默认是领域策略，二者都不因为拥有名称中的业务语义就成为自治 Agent。
 
 统一实现形态以 [总纲职责矩阵](00_架构设计总纲.md) 为准。
@@ -121,6 +122,8 @@ Java SDK 已经提供一组可以直接使用的运行对象，但并非现有�
 | Budget | `Models.Budget(maxTurns, timeoutSeconds)`、`Run.usage()` | 可收紧单次 Run 轮数和超时，读取 token/turns；没有完整的跨步骤成本预估、动态限额和计费账本 | SDK 预算映射为执行约束；完整 Budget Manager 由平台实现 |
 
 结论：SDK 负责“执行与交互原语”，平台负责“任务治理与领域语义”。不能因为 SDK 能创建 Run 就认为它已经拥有完整的 Plan/Task/Checkpoint/Artifact 生命周期。
+
+`DomainInvocationPort` 属于平台业务控制面，不是 Runtime SDK 原生 API。主 Workflow 用它编排领域；领域内部是否启动 Agent Run 由该领域决定。
 
 ### 4.1 Plan
 
@@ -152,7 +155,7 @@ stateDiagram-v2
   Planned --> Running: auto-approved
   AwaitingApproval --> Running: approved
   AwaitingApproval --> Cancelled: rejected
-  Running --> Waiting: budget_exhausted / awaiting_user
+  Running --> Waiting: budget_exhausted / awaiting_user / awaiting_domain / awaiting_approval
   Waiting --> Running: resume
   Waiting --> Cancelled: rejected / abandoned
   Waiting --> Failed: deadline exceeded
@@ -166,12 +169,14 @@ stateDiagram-v2
   Cancelled --> [*]
 ```
 
-本图是 Task 的唯一正式状态集。**不设独立 `Paused` 或 `WAITING_USER`。** 本次 Video Domain Agent 交付启用以下 `waiting_reason`：
+本图是 Task 的唯一正式状态集。**不设独立 `Paused` 或 `WAITING_USER`。** 本次跨域交付启用以下 `waiting_reason`：
 
 - `budget_exhausted`：预算耗尽，等待扩额、降级或停机决策后恢复或取消；
-- `awaiting_user`：等待用户确认、补充或审批。
+- `awaiting_user`：等待用户补充信息或普通确认；
+- `awaiting_domain`：主 Workflow 等待领域子任务或外部领域结果；
+- `awaiting_approval`：等待范围化业务审批，例如 Ads 草稿或发布。
 
-`awaiting_external` 留作未来外部任务扩展，本次 Schema、DDL 和状态机不启用；未来启用时必须通过新版本契约同步数据库约束、投影规则和验收脚本。
+`awaiting_external` 保留为未来通用外部任务扩展，本次跨域编排使用更明确的 `awaiting_domain`。未来启用新原因时必须通过新版本契约同步数据库约束、投影规则和验收脚本。
 
 计划审批由任务策略决定：策略未要求审批时允许 `Planned → Running`；要求审批时必须经过 `AwaitingApproval`。`Waiting` 的恢复、取消或超时失败也应使用上述显式迁移，不引入额外状态。
 
@@ -365,7 +370,7 @@ flowchart TB
 - 修订必须回到受约束计划或明确的问题阶段，并受预算、重试次数和停机条件限制。“最多两次”是可以由 Domain Pack 配置的策略模板，不是平台全局常量。
 - 用户确认和实际采用事件必须回流 URRE、评估与任务复盘，不能只记录为聊天反馈。
 
-映射到 Java SDK 时，Platform Agent、领域 Agent、Planner/Workflow 和审核环节可以由 SDK 托管 Agent 与业务控制面组合实现；只有实际需要模型决策的执行步骤才创建 Run。简单业务 API 仍应直接调用，不为了统一调用方式而额外创建 Agent Run。
+映射到 Java SDK 时，CreativeProductionWorkflow、领域 Agent、Planner/Workflow 和审核环节可以由 SDK 托管 Agent 与业务控制面组合实现；只有实际需要模型决策的执行步骤才创建 Run。简单业务 API 仍应直接调用，不为了统一调用方式而额外创建 Agent Run。
 
 ## 7. 工具系统：注册适配层 + 策略治理层
 
