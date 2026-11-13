@@ -6,6 +6,8 @@
 
 > **本次交付约束：** URRE 真实检索、商品/广告等领域和数据加工平面不在交付范围。本次只使用 Video/Clip Mock Adapter；本文保留为未来替换 Mock 的接口参考，不能成为 Video Domain Agent 的开工前置。
 
+真实 URRE 2.0 的控制面、加工产物、上游 API、Elasticsearch、Qdrant 和 Redis 字段模型见 [URRE 数据与存储模型设计](05_URRE数据与存储模型设计.md)。
+
 ---
 
 ## 1. 设计目标

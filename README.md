@@ -14,3 +14,5 @@
 
 [`00_架构设计总纲.md`](00_架构设计总纲.md)、[`01_URRE架构设计.md`](01_URRE架构设计.md) 和 [`02_AgentRuntime架构设计.md`](02_AgentRuntime架构设计.md) 提供平台原则和 Runtime 边界。它们描述的其他领域及生产基础设施不进入本次交付。
 
+真实 URRE 2.0 的数据加工、控制面、API 和存储模型见 [`05_URRE数据与存储模型设计.md`](05_URRE数据与存储模型设计.md)。该文档是未来替换 Mock Retrieval Adapter 的设计基线，不构成本次 Video Domain Agent 交付的前置依赖。
+
