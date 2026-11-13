@@ -14,13 +14,14 @@
 ```text
 用户目标
   → Intent Router
-  → Video Domain Agent
-  → TaskBrief / CreativeBrief / Storyboard / ClipPlan
-  → 每个计划 Clip 调用 Mock Search / Recommendation / Similar
-  → CandidateSet + Evidence
-  → MaterialAssignment
-  → 用户确认或局部修改
-  → 结构化 Artifact
+     ├─ 简单 Search / Recommendation / Similar → Retrieval Port
+     └─ 复杂创作 → Video Domain Agent
+          → TaskBrief / CreativeBrief / Storyboard / ClipPlan
+          → 每个计划槽位至少有 Search 或 Recommendation 路径，Similar 按需调用
+          → CandidateSet + Evidence
+          → MaterialAssignment
+          → 用户确认或局部修改
+          → 结构化 Artifact
 ```
 
 本次只交付 Agent 和执行契约，不交付完整视频平台。真实素材加工、ES/Qdrant、推荐模型、视频生成、渲染、导出、前端和跨领域业务均被 Mock 或保留为未来 Adapter。
@@ -69,12 +70,12 @@
 ```mermaid
 flowchart TB
   API[Business API / SSE] --> ROUTER[Intent Router]
-  ROUTER -->|Simple| PORT[Retrieval Port]
+  ROUTER -->|简单 Search / Recommendation / Similar| PORT[Retrieval Port]
   ROUTER -->|Complex| WF[Workflow Orchestrator]
   WF <--> SDK[Runtime SDK Adapter]
   SDK <--> AGENT[Video Domain Agent Run]
   AGENT <--> TOOLS[Tool Registry + Policy]
-  TOOLS --> RETRIEVAL[Mock Retrieval / Recommendation]
+  TOOLS --> RETRIEVAL[Mock Search / Recommendation / Similar]
   TOOLS --> DOMAIN[Project / Artifact / Composition]
   DOMAIN <--> DB[(PostgreSQL)]
   RETRIEVAL --> FIXTURES[(Fixture Video / Clip Catalog)]
@@ -85,7 +86,7 @@ flowchart TB
 | 组件 | 职责 |
 |---|---|
 | Business API | 创建任务、查询状态、提交确认和接收 SSE |
-| Intent Router | 区分直接检索、推荐和复杂 Agent Task |
+| Intent Router | 区分直接 Search、Recommendation、Similar 和复杂 Agent Task |
 | Workflow Orchestrator | 持有 Task、Plan、Step、Checkpoint 和恢复逻辑 |
 | Runtime SDK Adapter | 封装认证、AgentSpec、Session、Run、Action 和 SSE |
 | Video Domain Agent | 澄清、创作判断、Tool 调用和结构化输出 |
@@ -207,10 +208,12 @@ Video 表示完整、可播放的视频资产。一个 Video 可以有任意数�
 
 ### 4.2 Clip
 
-Clip 是连续时间片段：
+Clip 是连续时间片段。Video / Clip 字段与不变量以 [交付范围与 Video/Clip 模型](00_交付范围与VideoClip模型.md) §2.2 为准：
 
 - 必须引用一个 Video。
-- 保存 `start_ms/end_ms`。
+- 保存 `start_ms` / `end_ms` / `duration_ms`。
+- `0 <= start_ms < end_ms <= Video.duration_ms`。
+- `duration_ms` 必须等于 `end_ms - start_ms`，是落列字段，不是仅在示例中出现的派生值。
 - 可以有独立预览、关键帧、语义摘要和标签。
 - 可以是固定切片、跨内部切点的片段或未来生成片段。
 - 不引入更细层级。
@@ -245,7 +248,23 @@ ClipPlan 是创作计划，不是素材。每个 ClipRequirement 使用独立的
     }
   ],
   "selection_reason": "内容、时长和画面要求均满足 Clip 需求",
-  "user_confirmed": false
+  "user_confirmed": false,
+  "scores": {
+    "semantic_fit": 0.91,
+    "visual_fit": 0.88,
+    "evidence_confidence": 0.90,
+    "technical_quality": 0.93,
+    "duration_fit": 0.89,
+    "freshness": 0.80,
+    "storyboard_coverage": 0.92,
+    "style_consistency": 0.86,
+    "low_redundancy": 0.84,
+    "temporal_rhythm_fit": 0.88,
+    "clip_fit": 0.91,
+    "collection_fit": 0.88,
+    "task_fit": 0.90
+  },
+  "status": "proposed"
 }
 ```
 
@@ -412,7 +431,7 @@ flowchart TB
   E -->|否| F[有界 fallback] --> R
   E -->|是| MA[MaterialAssignment]
   MA --> U{用户确认?}
-  U -->|修改| MA
+  U -->|修改计划槽位| R
   U -->|确认| OUT[确认版 Artifact]
 ```
 
@@ -420,7 +439,7 @@ flowchart TB
 
 1. 定位 `storyboard_clip_id` 和对应 `clip_plan_id`。
 2. 创建该计划 Clip 的新 Requirement 版本。
-3. 只调用该 Clip 的相关 Search/Recommendation。
+3. 只调用该计划槽位的相关 Search / Recommendation，Similar 按需。
 4. 生成新的 Assignment Set。
 5. 未受影响 Assignment 保持版本引用。
 6. 记录旧 Artifact 为被替代，不原地覆盖。
@@ -556,17 +575,7 @@ total = 0.75 * clip_fit + 0.25 * collection_fit
 
 ### 13.1 关联键
 
-- `request_id`
-- `trace_id`
-- `session_id`
-- `task_id`
-- `step_id`
-- `run_id`
-- `runtime_run_id`
-- `action_request_id`
-- `tool_call_id`
-- `candidate_set_id`
-- `artifact_id`
+关联键以 [API 与数据契约](01_API与数据契约.md) §8 为唯一清单；本节不再另列一套。Agent / Run 链路按该节填写信封键与关联键，不把 `session_id` 提升为关联键主清单项。
 
 ### 13.2 事件
 
@@ -589,12 +598,12 @@ total = 0.75 * clip_fit + 0.25 * collection_fit
 
 固定评测集至少覆盖：
 
-- 简单搜索不启动 Agent。
+- 简单 Search、Recommendation 和 Similar 不启动 Agent。
 - 复杂创作生成 Storyboard 和 ClipPlan。
 - 信息不足时澄清。
 - 零结果 Query 有界重写。
 - Clip 级 Search 与 Recommendation 合并。
-- 单个 Clip 局部替换。
+- 替换或修改某个计划槽位（`storyboard_clip_id`）时只重算受影响范围。
 - Tool 超时和非法 Schema。
 - 预算耗尽和恢复。
 - Prompt Injection 不改变权限。
@@ -627,11 +636,12 @@ total = 0.75 * clip_fit + 0.25 * collection_fit
 4. Agent 能生成 TaskBrief、CreativeBrief、Storyboard、ClipPlan 和 MaterialAssignment。
 5. Search、Recommendation、Similar 全部通过 Mock Port 工作。
 6. 每个计划 Clip 有 Search 或 Recommendation 结果路径。
-7. 用户修改只重算受影响 Clip。
+7. 用户替换或修改某个计划槽位（`storyboard_clip_id`）时，只重算受影响的需求、候选和 Assignment。
 8. Runtime Run、Action、ToolCall 和 Artifact 全链路可关联。
 9. Task 可进入带原因的 Waiting、恢复和取消，重复调用无重复副作用。
 10. Prompt Injection 和租户隔离测试通过。
 11. 不依赖真实索引、媒体渲染、前端或外部平台即可完成 Demo。
+12. Feedback 经 Mock Port 可写、可审计，且不依赖前端。
 
 ## 16. 架构决策摘要
 
@@ -640,7 +650,7 @@ total = 0.75 * clip_fit + 0.25 * collection_fit
 | VDA-ADR-01 | 单 Video Domain Agent + 显式 Workflow |
 | VDA-ADR-02 | 素材模型固定为 Video / Clip |
 | VDA-ADR-03 | 计划侧使用 ClipPlan / ClipRequirement |
-| VDA-ADR-04 | Simple Search/Recommendation 不经过 Agent |
+| VDA-ADR-04 | 简单 Search、Recommendation 和 Similar 不经过 Agent |
 | VDA-ADR-05 | 检索推荐采用 Mock-first 和 Port/Adapter |
 | VDA-ADR-06 | Task 状态由业务 Workflow 持有 |
 | VDA-ADR-07 | Agent 只输出结构化 Artifact |

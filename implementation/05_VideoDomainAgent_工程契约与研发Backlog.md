@@ -3,7 +3,8 @@
 > **状态：** Mock-first 工程基线，2026-11-12。
 > **范围：** 只交付通用 Video Domain Agent。
 > **模型：** `Video -> Clip`，计划侧使用 `ClipPlan / ClipRequirement`。
-> **依据：** [交付范围与模型基线](00_交付范围与VideoClip模型.md)、[详细设计](04_VideoDomainAgent_详细设计与实施手册.md)。
+> **依据：** [交付范围与模型基线](00_交付范围与VideoClip模型.md)、[API 与数据契约](01_API与数据契约.md)、[详细设计](04_VideoDomainAgent_详细设计与实施手册.md)。
+> **公开 API：** 形状以 `implementation/01` 为准；本文 §5 / §6 是工程摘录，只保留工程增量。
 
 ## 1. 工程目标
 
@@ -23,6 +24,7 @@
 - Project、Task、Plan、Step、Checkpoint、Artifact。
 - Video/Clip 数据模型。
 - Search、Recommendation、Similar、Evidence Mock。
+- Feedback Mock（经 RetrievalGateway 可写、可审计，不依赖前端）。
 - Storyboard、ClipPlan、ClipRequirement、MaterialAssignment。
 - Tool Registry、Policy Gateway、幂等和审计。
 - Agent Eval 与 Mock 端到端验收。
@@ -74,14 +76,17 @@ video-domain-agent/
 │   ├── video-workflows/
 │   ├── video-composition/
 │   └── video-adapters/
+│       ├── retrieval-client/
+│       └── project-client/
 ├── mocks/
 │   ├── fixture-catalog/
 │   ├── fake-retrieval/
-│   ├── fake-recommendation/
 │   └── fake-evidence/
 ├── test-support/
 └── docs/
 ```
+
+`fake-retrieval/` 覆盖 Search、Recommendation、Similar 和 Feedback，是同一 `RetrievalGateway` 的实现目录，不得另立 Recommendation Port。`retrieval-client` 与 `project-client` 是对已注册 Port / 公开 API 的调用封装，不是新的 Port。
 
 ### 3.1 依赖
 
@@ -148,6 +153,8 @@ mock:
 
 ## 5. 通用 API
 
+§5 / §6 是工程摘录，公开 API 形状以 [API 与数据契约](01_API与数据契约.md) 为准；本文只保留工程增量（例如创建任务响应中的 `resource_version`）。
+
 ### 5.1 Header
 
 ```http
@@ -158,7 +165,7 @@ Idempotency-Key: <required-for-mutation>
 Traceparent: <w3c-trace-context>
 ```
 
-服务端不信任客户端自报 `user_id`、租户和项目范围。
+公共头与写操作幂等语义以 [API 与数据契约](01_API与数据契约.md) §3.0 为准。服务端不信任客户端自报 `user_id`、租户和项目范围。
 
 ### 5.2 Project 与 Task
 
@@ -173,6 +180,8 @@ POST /api/v1/video/tasks/{taskId}/wait
 POST /api/v1/video/tasks/{taskId}/resume
 POST /api/v1/video/tasks/{taskId}/cancel
 ```
+
+`wait` 请求体与合法迁移以 [API 与数据契约](01_API与数据契约.md) §3.1 为准，本节不再抄一份正文。
 
 创建任务：
 
@@ -201,6 +210,8 @@ POST /api/v1/video/tasks/{taskId}/cancel
   "resource_version": "1"
 }
 ```
+
+API 的 `mode` 落列为 `video_task.task_type`，二者是同一字段的 API 名与列名，取值一致（本次示例为 `creation`）。任务 `goal` 落列为 `video_task.goal`，与项目表的 `goal` 分开保存。
 
 ### 5.3 Artifact
 
@@ -277,11 +288,17 @@ POST /api/v1/retrieval/recommend
     "clip_plan_id": "clipplan_001",
     "storyboard_clip_id": "sb_clip_003",
     "clip_requirement": {
+      "storyboard_clip_id": "sb_clip_003",
+      "narrative_role": "proof",
       "visual_goal": "人机协作完成精密装配",
+      "clip_type": "close_up",
       "duration_target_ms": 5000,
-      "clip_type": "close_up"
+      "hard_constraints": {},
+      "soft_preferences": {},
+      "fallback_requirements": {},
+      "evidence_requirements": []
     },
-    "covered_clip_ids": ["sb_clip_001", "sb_clip_002"],
+    "covered_storyboard_clip_ids": ["sb_clip_001", "sb_clip_002"],
     "selected": [
       {
         "storyboard_clip_id": "sb_clip_001",
@@ -310,9 +327,10 @@ POST /api/v1/retrieval/similar
 {
   "seed": {
     "entity_type": "clip",
-    "video_id": "video_001",
-    "clip_id": "clip_002"
+    "video_id": "video_002",
+    "clip_id": "clip_003"
   },
+  "domain": "video",
   "similarity_targets": ["semantic", "visual"],
   "filters": {},
   "limit": 20
@@ -346,6 +364,8 @@ Agent 不拥有写最终采用反馈的 Tool。
 
 `preview.started/completed` 只保留为未来 UI 遥测，不属于本次必交事件。
 
+Feedback 经 `RetrievalGateway.writeFeedback` 写入，不另拆检索 Port；事件类型以 [API 与数据契约](01_API与数据契约.md) §4.6 / §8 为准。落表见 §10.9 `video_feedback_event`，Direct 路径允许 `task_id` 为空。
+
 ## 7. Core Port
 
 ```java
@@ -360,6 +380,7 @@ public interface RetrievalGateway {
     CandidateSet search(TenantContext context, SearchRequest request);
     CandidateSet recommend(TenantContext context, RecommendationRequest request);
     CandidateSet similar(TenantContext context, SimilarRequest request);
+    FeedbackReceipt writeFeedback(TenantContext context, FeedbackRequest request);
 }
 
 public interface EvidenceGateway {
@@ -422,6 +443,8 @@ public interface AgentRuntimePort {
 所有 Adapter 运行同一 Port Contract Test。
 
 ## 8. Schema
+
+对象必填字段以 `00` / `01` 为准，本节示例不得削薄。除 §8.3 `SearchPlan` 外，其余为实例；生成用 Schema 以 `contracts/schemas` 及 `00` / `01` 为准。Assignment 分项 `scores` 存放在 `video_assignment_set.content_json`，`video_material_assignment.score` 只存最终综合分。Storyboard 作为 Artifact 存储，不另建表；`video_clip_plan.storyboard_id` 指向该 Artifact 的 `artifact_id`，不做跨表外键。
 
 ### 8.1 Video
 
@@ -734,6 +757,7 @@ CREATE TABLE video_task (
   project_id      varchar(64) NOT NULL REFERENCES video_project(project_id),
   created_by      varchar(64) NOT NULL,
   task_type       varchar(32) NOT NULL,
+  goal            text NOT NULL,
   status          varchar(32) NOT NULL,
   waiting_reason  varchar(32)
                   CHECK (waiting_reason IS NULL OR waiting_reason IN
@@ -748,6 +772,8 @@ CREATE TABLE video_task (
       OR (status <> 'Waiting' AND waiting_reason IS NULL))
 );
 ```
+
+`task_type` 对应 API 的 `mode`；`goal` 保存该任务目标，与 `video_project.goal` 分开。
 
 允许状态：`Created`、`Planned`、`AwaitingApproval`、`Running`、`Waiting`、`Reviewing`、`Completed`、`Failed`、`Cancelled`。
 
@@ -845,7 +871,11 @@ CREATE TABLE video_asset (
   feature_version  varchar(64),
   created_at       timestamptz NOT NULL DEFAULT now()
 );
+```
 
+`width`、`height`、`fps`、`preview_ref`、`feature_version` 列级可空，仅为未来真实入库预留；按 `00` §2，本次 Mock、API 表示层和 Fixture 仍必填，不得把表示层改成可空来迁就 DDL。
+
+```sql
 CREATE TABLE video_clip (
   clip_id          varchar(64) PRIMARY KEY,
   tenant_id        varchar(64) NOT NULL,
@@ -864,7 +894,11 @@ CREATE TABLE video_clip (
   created_at       timestamptz NOT NULL DEFAULT now(),
   CHECK (start_ms >= 0 AND end_ms > start_ms AND duration_ms = end_ms - start_ms)
 );
+```
 
+`preview_ref`、`keyframe_ref`、`semantic_summary`、`feature_version` 列级可空，仅为未来真实入库预留；按 `00` §2，本次 Mock、API 表示层和 Fixture 仍必填，不得把表示层改成可空来迁就 DDL。
+
+```sql
 CREATE INDEX idx_video_clip_video_time
   ON video_clip (tenant_id, video_id, start_ms);
 ```
@@ -947,7 +981,7 @@ CREATE TABLE video_clip_requirement (
   clip_plan_id     varchar(64) NOT NULL REFERENCES video_clip_plan(clip_plan_id),
   storyboard_clip_id varchar(64) NOT NULL,
   sequence_order   integer NOT NULL,
-  narrative_role   varchar(64),
+  narrative_role   varchar(64) NOT NULL,
   visual_goal      text NOT NULL,
   subject_json     jsonb NOT NULL DEFAULT '[]'::jsonb,
   action_json      jsonb NOT NULL DEFAULT '[]'::jsonb,
@@ -1069,7 +1103,32 @@ CREATE TABLE video_agent_event (
   created_at       timestamptz NOT NULL DEFAULT now(),
   UNIQUE (tenant_id, task_id, sequence)
 );
+
+CREATE TABLE video_feedback_event (
+  feedback_id        varchar(64) PRIMARY KEY,
+  tenant_id          varchar(64) NOT NULL,
+  event_type         varchar(64) NOT NULL,
+  source             varchar(32) NOT NULL,
+  occurred_at        timestamptz NOT NULL,
+  request_id         varchar(64),
+  candidate_set_id   varchar(64),
+  project_id         varchar(64),
+  task_id            varchar(64),
+  storyboard_clip_id varchar(64),
+  entity_type        varchar(16),
+  entity_id          varchar(64),
+  video_id           varchar(64),
+  clip_id            varchar(64),
+  position           integer,
+  strategy_version   varchar(64),
+  properties_json    jsonb NOT NULL DEFAULT '{}'::jsonb,
+  idempotency_key    varchar(200) NOT NULL,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, idempotency_key)
+);
 ```
+
+`video_feedback_event` 是 Feedback 的落表，不复用 `video_agent_event`。Direct 路径允许 `task_id` 为空；Agent / 任务路径应填写 `task_id`。字段与 [API 与数据契约](01_API与数据契约.md) §4.6 对齐。
 
 ## 11. Mock 契约
 
@@ -1157,7 +1216,7 @@ WHERE task_id = :task_id
 | VDA-012 | Fake Recommendation | clip_candidate 场景 | 上下文影响排序 |
 | VDA-013 | Fake Similar | Seed Clip → 候选 | 不返回超权限 Clip |
 | VDA-014 | Fake Evidence | 固定证据与预览 | 证据和预览引用可解析 |
-| VDA-015 | Feedback Attribution | 事件与 Power | request/candidate 链可追 |
+| VDA-015 | Feedback Attribution | `RetrievalGateway.writeFeedback` + `video_feedback_event` | request/candidate 链可追；Direct 路径允许 `task_id` 为空 |
 
 ### 13.3 P2：Agent 与 Workflow
 
@@ -1167,9 +1226,9 @@ WHERE task_id = :task_id
 | VDA-017 | Runtime SDK Adapter | Run/Action/SSE | Fake Runtime 通过 |
 | VDA-018 | Intent Router | Direct/Agent 分流 | 简单 Query 不建 Run |
 | VDA-019 | Video Domain AgentSpec | Prompt + Output Schema | 固定版本可发布 |
-| VDA-020 | Search/Recommend Tools | LocalToolset handler | 工具结果可回读 |
+| VDA-020 | Search/Recommend/Similar Tools | LocalToolset handler | 含 `find_similar_materials`，工具结果可回读 |
 | VDA-021 | Creation Workflow | Brief/Storyboard/ClipPlan | 三个 Artifact 生成 |
-| VDA-022 | Clip 并行与局部重算 | Step 调度 | 单 Clip 失败不阻塞其他 |
+| VDA-022 | 计划槽位并行与局部重算 | Step 调度 | 单槽位失败不阻塞其他槽位 |
 | VDA-023 | Waiting/Action/Approval | 用户确认和恢复 | 重复确认幂等 |
 | VDA-024 | Budget/Retry/Failure | 预算和失败分类 | 故障注入通过 |
 

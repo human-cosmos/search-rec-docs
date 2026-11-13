@@ -96,7 +96,9 @@ Clip 至少包含：
 - Clip 可以覆盖单个语义切分、跨切点片段或独立切片，但不再区分 Shot 和 Segment。
 - 搜索和推荐候选的 `entity_type` 只能是 `video` 或 `clip`。
 - Clip 级候选必须携带来源 `video_id` 和精确时间区间。
-- 播放、预览和证据都通过受控 `preview_ref` / `evidence_ref` 获取。
+- 预览走 `preview_ref` / `keyframe_ref`；证据引用挂在候选或分配结果上，由 Evidence Port 解析，不是 Clip 的落列字段。
+- `availability` 只表达该 Video / Clip 是否可用，版权、许可、地域和署名过滤不在本次范围。
+- 以上为逻辑模型最少字段，本次 Mock 与 API 表示层必填；列级可空和默认值以 `implementation/05` 为准，并在 DDL 旁注明可空理由。
 
 ### 2.3 概念映射
 
@@ -169,12 +171,11 @@ MaterialAssignment 将一个素材候选绑定到一个计划 Clip：
 
 ## 4. Mock-first 开发约束
 
-本次开发不等待真实检索推荐数据。以下能力必须先以确定性 Mock 实现：
+本次开发不等待真实检索推荐数据。以下能力必须先以确定性 Mock 实现；Port 切分与接口命名以 `implementation/05` §7 为准：
 
-- `FakeVideoCatalog`：固定 Video/Clip 数据。
-- `FakeRetrievalGateway`：支持 Search、Similar 和零结果。
-- `FakeRecommendationGateway`：按项目或 Clip 上下文返回稳定候选。
-- `FakeEvidenceResolver`：返回固定证据摘要和预览引用。
+- `FakeVideoCatalogPort`：固定 Video/Clip 数据。
+- `FakeRetrievalGateway`：覆盖 Search、Recommendation、Similar 和零结果。Recommendation 按 `clip_candidate` 所需的计划槽位、已覆盖 Clip 等上下文返回稳定候选。
+- `FakeEvidenceGateway`：返回固定证据摘要和预览引用。
 
 Mock 必须与正式 Port 使用相同 Schema。切换真实 Adapter 时，上层 Agent、Workflow 和业务代码不得修改。
 
@@ -185,6 +186,9 @@ Mock 必须与正式 Port 使用相同 Schema。切换真实 Adapter 时，上�
 - 至少 1 个跨切点 Clip。
 - 至少 1 个零结果查询。
 - 至少 2 个语义相似但视觉不同的 Clip。
+
+Mock 行为最低要求：
+
 - 至少 1 个超时和 1 个非法 Tool 参数场景。
 
 ## 5. 完成定义
@@ -192,10 +196,11 @@ Mock 必须与正式 Port 使用相同 Schema。切换真实 Adapter 时，上�
 交付完成的必要条件是：
 
 1. 所有机器契约中只存在 `Video` 和 `Clip` 两级视频对象。
-2. 简单搜索不启动 Agent，复杂搜索和创作任务进入 Agent。
+2. 简单 Search、Recommendation 和 Similar 不启动 Agent，直接走 Mock Port；复杂搜索和创作任务进入 Agent。
 3. Agent 能生成 TaskBrief、CreativeBrief、Storyboard、ClipPlan 和 MaterialAssignment。
 4. Search、Recommendation 和 Similar 均通过 Mock Port 工作。
-5. 用户修改单个 Clip 时只重算受影响范围。
+5. 用户替换或修改某个计划槽位（`storyboard_clip_id`）时，只重算受影响的需求、候选和 Assignment。
 6. Task 等待、恢复、幂等、预算和 Tool 审计通过。
 7. Agent Eval 覆盖澄清、零结果、局部替换、工具失败和 Prompt Injection。
 8. 不依赖真实数据加工、媒体渲染、前端或外部平台即可完成端到端 Demo。
+9. Feedback 经 Mock Port 可写、可审计，且不依赖前端。

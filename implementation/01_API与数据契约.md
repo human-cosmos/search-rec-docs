@@ -10,10 +10,10 @@
 1. 素材对象只有 Video 和 Clip。
 2. Clip 必须引用父 Video，并携带精确时间区间。
 3. Search、Recommendation 和 Similar 使用相同 CandidateSet 结构。
-4. Simple Search/Recommendation 可直接调用 Mock Port，不启动 Agent。
+4. 简单 Search、Recommendation 和 Similar 可直接调用 Mock Port，不启动 Agent。
 5. 租户、用户和项目权限由服务端可信上下文注入。
 6. Agent 只调用语义 Tool，不直接访问数据库、Fixture 或文件。
-7. 所有写操作有幂等键和审计字段。
+7. 所有写操作有幂等键和审计字段；公共头与幂等语义见 §3.0。
 8. Mock 与未来真实 Adapter 使用相同 Schema。
 9. 对外事件只暴露状态、摘要和引用，不暴露内部推理。
 
@@ -44,7 +44,23 @@ public interface DomainProvider {
 
 ## 3. Public API
 
-统一前缀：`/api/v1`。
+统一前缀：`/api/v1`。Video / Clip 对象字段与不变量以 [交付范围与 Video/Clip 模型](00_交付范围与VideoClip模型.md) §2 为准，物理列与 DDL 以 [工程契约与研发 Backlog](05_VideoDomainAgent_工程契约与研发Backlog.md) §8 / §10.6 为准，本文不另抄字段表。
+
+### 3.0 公共头
+
+所有公开 API 使用以下公共头：
+
+```http
+Authorization: Bearer <token>
+X-Tenant-Id: <trusted-gateway-injected>
+X-Request-Id: <request-id>
+Idempotency-Key: <required-for-mutation>
+Traceparent: <w3c-trace-context>
+```
+
+写操作（`POST` / `PATCH`，含创建项目与任务、approve、assign、confirm、wait、resume、cancel 和 Feedback）必须携带 `Idempotency-Key`。相同键重放时：若请求体一致，返回首次成功结果；若请求体不一致，返回冲突，不得再执行一次副作用。工程示例见 [工程契约与研发 Backlog](05_VideoDomainAgent_工程契约与研发Backlog.md) §5.1，公共头与幂等语义以本节为准。
+
+服务端不信任客户端自报 `user_id`、租户和项目范围。
 
 ### 3.1 Project 与 Task
 
@@ -55,7 +71,7 @@ public interface DomainProvider {
 | `PATCH` | `/video/projects/{projectId}` | 修改目标或约束 |
 | `POST` | `/video/projects/{projectId}/tasks` | 创建任务 |
 | `GET` | `/video/tasks/{taskId}` | 查询状态 |
-| `GET` | `/video/tasks/{taskId}/stream` | 订阅 SSE |
+| `GET` | `/video/tasks/{taskId}/stream` | 订阅 SSE；数据帧使用 §8 事件信封 |
 | `POST` | `/video/tasks/{taskId}/wait` | 进入 Waiting |
 | `POST` | `/video/tasks/{taskId}/resume` | 恢复任务 |
 | `POST` | `/video/tasks/{taskId}/cancel` | 取消任务 |
@@ -94,6 +110,14 @@ Task 状态：
 - `awaiting_user`
 - `budget_exhausted`
 
+Task 合法状态迁移以 [详细设计与实施手册](04_VideoDomainAgent_详细设计与实施手册.md) §3.1 为准。`POST /video/tasks/{taskId}/wait` 请求体必须带已启用的 `waiting_reason`，且仅允许从 `Running` 进入 `Waiting`；禁止客户端把任意状态的任务直接打成 `Waiting`。
+
+```json
+{
+  "waiting_reason": "awaiting_user"
+}
+```
+
 ### 3.2 Artifact
 
 | 方法 | 路径 | 用途 |
@@ -110,6 +134,8 @@ Task 状态：
 | `GET` | `/video/assignments/{assignmentSetId}` | 查询 Assignment |
 | `PATCH` | `/video/assignments/{assignmentSetId}` | 锁定或替换 |
 | `POST` | `/video/assignments/{assignmentSetId}/confirm` | 用户确认 |
+
+Assignment `status` 枚举为 `proposed`、`confirmed`、`locked`、`superseded`，与 `implementation/05` §10.6 DDL CHECK 一致，本文不再另造状态名。`POST .../confirm` 将对应 Assignment 迁为 `confirmed`；`PATCH` 用于锁定（迁为 `locked`）或替换（被替换项迁为 `superseded`）。
 
 ### 3.4 Agent Run
 
@@ -197,11 +223,13 @@ Task 状态：
 }
 ```
 
+`SearchPlan` 只作为 Agent Tool / 复杂检索输入，不是独立公开 HTTP 路径。公开 Search API（§4.1）只接受 `SearchRequest`；`search_video_materials` Tool 只接受 `SearchPlan`。由服务端将 `SearchPlan` 转换为内部检索请求，不得再公开第二套 Search 路径。
+
 ### 4.3 Recommendation
 
 `POST /api/v1/retrieval/recommend`
 
-本次 `scene` 枚举只允许 `clip_candidate`。其余推荐场景见 `03`，列为未来扩展，不进入本次契约。
+本次 `scene` 枚举只允许 `clip_candidate`。其余推荐场景见 `03`，列为未来扩展，不进入本次契约。`covered_storyboard_clip_ids` 只允许计划侧 `sb_clip_*`，`excluded_clip_ids` 只允许素材 `clip_id`，由 Schema 校验。这里的 `clip_requirement` 使用与 §6.2 相同的 `ClipRequirement` Schema，必填字段不得削薄；其中 `storyboard_clip_id` 必须与同级 context 字段一致。
 
 ```json
 {
@@ -213,11 +241,17 @@ Task 状态：
     "clip_plan_id": "clipplan_001",
     "storyboard_clip_id": "sb_clip_003",
     "clip_requirement": {
+      "storyboard_clip_id": "sb_clip_003",
+      "narrative_role": "proof",
       "visual_goal": "人机协作完成精密装配",
       "clip_type": "close_up",
-      "duration_target_ms": 5000
+      "duration_target_ms": 5000,
+      "hard_constraints": {},
+      "soft_preferences": {},
+      "fallback_requirements": {},
+      "evidence_requirements": []
     },
-    "covered_clip_ids": ["sb_clip_001", "sb_clip_002"],
+    "covered_storyboard_clip_ids": ["sb_clip_001", "sb_clip_002"],
     "selected": [
       {
         "storyboard_clip_id": "sb_clip_001",
@@ -247,11 +281,14 @@ Task 状态：
     "video_id": "video_002",
     "clip_id": "clip_003"
   },
+  "domain": "video",
   "similarity_targets": ["semantic", "visual"],
   "filters": {},
   "limit": 20
 }
 ```
+
+`entity_type=clip` 时 `video_id` 与 `clip_id` 必填；`entity_type=video` 时 `video_id` 必填、`clip_id` 为空。该不变量与 §5 的候选规则一致。
 
 ### 4.5 Evidence
 
@@ -302,7 +339,10 @@ Evidence Resolver 必须重新校验租户和项目访问权限，不接受宿�
   "project_id": "project_001",
   "task_id": "task_001",
   "storyboard_clip_id": "sb_clip_003",
+  "entity_type": "clip",
   "entity_id": "clip_003",
+  "video_id": "video_002",
+  "clip_id": "clip_003",
   "position": 1,
   "strategy_version": "video_mock_clip_fit_v1",
   "properties": {}
@@ -476,6 +516,8 @@ Clip 候选：
 }
 ```
 
+`status` 枚举为 `proposed`、`confirmed`、`locked`、`superseded`，与 `implementation/05` §10.6 DDL CHECK 一致；迁移规则见 §3.3。
+
 ### 6.4 Artifact Metadata
 
 所有 Artifact 至少包含：
@@ -499,7 +541,7 @@ Clip 候选：
 | Tool | 输入 | 输出 | 风险 |
 |---|---|---|---|
 | `get_project_context` | project_id | ProjectContext | L0 |
-| `search_video_materials` | SearchPlan/SearchRequest | CandidateSetRef | L0 |
+| `search_video_materials` | SearchPlan | CandidateSetRef | L0 |
 | `recommend_video_materials` | RecommendationContext | CandidateSetRef | L0 |
 | `find_similar_materials` | Video/ClipRef | CandidateSetRef | L0 |
 | `resolve_evidence` | evidence_refs | EvidenceViewSet | L0 |

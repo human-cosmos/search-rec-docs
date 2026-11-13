@@ -31,7 +31,7 @@ Video Domain Agent 不负责：
 flowchart LR
   U[用户目标] --> API[Business API / SSE]
   API --> ROUTER[Intent Router]
-  ROUTER -->|简单 Search / Recommend| MOCK[Retrieval Port]
+  ROUTER -->|简单 Search / Recommendation / Similar| MOCK[Retrieval Port]
   ROUTER -->|复杂创作任务| WF[Video Workflow]
   WF <--> RT[Runtime SDK Adapter]
   RT <--> AGENT[Video Domain Agent]
@@ -100,10 +100,10 @@ Clip 是 Video 内可独立发现、推荐、引用和分配的连续时间片�
 - `feature_version`
 - `model_versions`
 
-不变量：
+不变量（字段与不变量以 `implementation/00` §2.2 为准，本文不再另立更弱约束）：
 
-- `start_ms < end_ms`。
-- Clip 时间区间必须位于父 Video 的时长范围内。
+- `0 <= start_ms < end_ms <= Video.duration_ms`。
+- `duration_ms` 必须等于 `end_ms - start_ms`，是落列字段，不是仅在示例中出现的派生值。
 - Clip 必须可回溯父 Video。
 - 搜索结果中的 Clip 必须带时间区间和证据引用。
 - Clip 可跨语义切点，不要求对应内部剪辑切点。
@@ -158,7 +158,7 @@ Clip 是 Video 内可独立发现、推荐、引用和分配的连续时间片�
 
 ### 4.5 Feedback
 
-记录曝光、打开、预览、拒绝、分配、替换和最终保留。Mock 阶段也必须产生可归因事件。
+本次记录 `recommendation.impression`、`recommendation.clicked`（对应打开）、`material.rejected`、`material.assigned` / `replaced` / `final_kept`。`preview.started/completed` 属于未来 UI 遥测，不进入本次验收。Mock 阶段也必须产生可归因事件。
 
 ## 5. Agent 与确定性服务职责
 
@@ -195,7 +195,7 @@ flowchart LR
 
 ### 6.3 Storyboard
 
-场景和叙事结构。场景下使用 `clip_requirements`，每条需求表达叙事角色与视觉目标。
+场景和叙事结构。场景下使用 `clip_requirements`，与 ClipPlan 使用同一 `ClipRequirement` Schema，必填字段不得削薄。
 
 ### 6.4 ClipPlan
 
@@ -225,7 +225,7 @@ flowchart LR
 ```mermaid
 flowchart TB
   U[用户目标] --> R{复杂度}
-  R -->|简单搜索/推荐| P[Retrieval Port]
+  R -->|简单 Search / Recommendation / Similar| P[Retrieval Port]
   R -->|复杂任务| A[Video Domain Agent]
   A --> Q{信息充分?}
   Q -->|否| ASK[澄清]
@@ -237,7 +237,7 @@ flowchart TB
   S --> C[CandidateSet + Evidence]
   C --> M[MaterialAssignment]
   M --> U2{用户确认?}
-  U2 -->|修改| M
+  U2 -->|修改计划槽位| S
   U2 -->|确认| OUT[结构化交付 Artifact]
 ```
 
@@ -253,10 +253,9 @@ flowchart TB
 
 本次交付使用：
 
-- `FakeVideoCatalog`
-- `FakeRetrievalGateway`
-- `FakeRecommendationGateway`
-- `FakeEvidenceResolver`
+- `FakeVideoCatalogPort`
+- `FakeRetrievalGateway`（覆盖 Search、Recommendation、Similar 和零结果）
+- `FakeEvidenceGateway`
 
 要求：
 
@@ -286,11 +285,12 @@ flowchart TB
 
 1. 所有视频领域 Schema 只使用 Video 和 Clip。
 2. 搜索可返回 Video 或 Clip，Clip 带精确时间区间和证据。
-3. 简单 Search/Recommendation 不启动 Agent。
-4. 复杂任务能生成 Storyboard、ClipPlan 和 MaterialAssignment。
+3. 简单 Search、Recommendation 和 Similar 不启动 Agent。
+4. 复杂任务能生成 TaskBrief、CreativeBrief、Storyboard、ClipPlan 和 MaterialAssignment。
 5. 每个 ClipRequirement 至少有 Search 或 Recommendation 候选路径。
-6. 用户只修改一个 Clip 时，不重建无关 Artifact。
+6. 用户替换或修改某个计划槽位（`storyboard_clip_id`）时，只重算受影响的需求、候选和 Assignment，不重建无关 Artifact。
 7. Mock Adapter 支持成功、零结果、超时和非法参数。
 8. Runtime Run、Action、Tool 和 Artifact 可完整追溯。
 9. Task 等待、恢复、取消和预算耗尽行为符合状态机。
 10. 不依赖真实索引、媒体渲染或前端即可完成端到端验收。
+11. Feedback 经 Mock Port 可写、可审计，且不依赖前端。
