@@ -21,8 +21,6 @@
 
 因此，平台不构建一个包揽全部业务流程的“全能 Agent”，也不以多个 Agent 的自由对话作为系统主执行链路。Agent 的自主判断必须发生在平台治理、Workflow 控制和 Artifact 契约之内。
 
-![](C:\Users\Administrator\Desktop\search-rec-docs\images\agent\视频智能体平台架构全景图.png)
-
 ## 1.2 建设目标
 
 本方案需要构建一套可扩展的 Agent 执行平台，并在平台上运行通用 Video Domain Agent。
@@ -42,8 +40,6 @@
 
 整体目标不是构建一个由多个 Agent 自由对话组成的系统，而是构建一个**以 Agent 为智能决策单元、以 Workflow 为执行控制单元、以 Artifact 为协作媒介的 AI 执行平台**。
 
-![](C:\Users\Administrator\Desktop\search-rec-docs\images\agent\视频领域智能代理完整执行流程.png)
-
 ## 1.3 核心架构原则
 
 以下 12 条为必须满足的顶层架构约束：
@@ -62,10 +58,6 @@
 | P10 | Run completed 不等于业务完成 | 必须继续经过 Task 状态机、Quality Gate 和必要审批 |
 | P11 | 副作用按等级治理 | L3 修改需要明确用户确认；L4 发布需要强审批和明确授权 |
 | P12 | Tool 必须完整声明契约 | 包括 Schema、Scope、副作用、超时、重试、幂等和日志脱敏策略 |
-
-![](C:\Users\Administrator\Desktop\search-rec-docs\images\agent\Agent层级关系与协作机制全景图.png)
-
-![](C:\Users\Administrator\Desktop\search-rec-docs\images\agent\并行 Agent 协作与 Artifact 传递架构.png)
 
 ### 原则一：Agent 不等于 Workflow
 
