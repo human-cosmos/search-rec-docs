@@ -1,10 +1,10 @@
 # 通用检索推荐系统与 Agent 架构设计：最终可实施版 v1.0
 
-> 版本：v1.0 FINAL｜日期：2026-11-14｜状态：**待独立评审通过后生效**（评审报告见 `06_评审与验收报告.md`）
-> 原始材料：`/Users/zed-mac/Documents/search-rec-docs/`（15 篇设计文档，约 47 万字节、12,436 行）+ PRD《AI乘风引擎·产品需求文档 v1.4》（2026-11-05，37 页）+ `/Users/zed-mac/Documents/java-examples/`（Acore Runtime Java SDK 0.2.0 示例）
+> 版本：v1.0（2026-11-16 修订：对齐 PRD v1.6，见 C-11）｜初版日期：2026-11-14｜状态：**评审通过（初版 PASS，修订复核见 `06`）**
+> 原始材料：`/Users/zed-mac/Documents/search-rec-docs/`（15 篇设计文档，约 47 万字节、12,436 行）+ PRD《万镜魔方·产品需求文档 v1.6》（2026-11-13，文本版，535 行；v1.4 图片版 37 页保留为历史，冲突时以 v1.6 为准）+ `/Users/zed-mac/Documents/java-examples/`（Acore Runtime Java SDK 0.2.0 示例）
 > 本目录位置（本机）：`/Users/zed-mac/Documents/search-rec-docs/final-v1.0/`
 > 工作区副本：`~/workspace/search-rec-analysis/final-v1.0/`（与本机版内容一致，以本机版为准）
-> **原则：原始文档一字不改。本目录是裁决层 + 冻结值层（评审 R-02 后的降级宣称）：它冻结范围、Schema、数值、排期与验收，冲突时以本目录为准；但它不是全文重写——25 张表的 DDL 全文、JSON Schema 全文、A01–A31 的逐项用例、42 个 Ticket 的完整 DoD 仍在原始文档中，核心正文已移入 `08_附录_核心契约正文.md`，其余以原始文档为准。工程师开工时须同时备有本目录与原始文档。**
+> **原则：原始文档一字不改。本目录是裁决层 + 冻结值层（评审 R-02 后的降级宣称）：它冻结范围、Schema、数值、排期与验收，冲突时以本目录为准；但它不是全文重写——25 张表的 DDL 全文、JSON Schema 全文、A01–A31 的逐项用例、42 个 Ticket 的完整 DoD 仍在原始文档中，核心正文已移入 `08_附录_核心契约正文.md`，其余以原始文档为准（25 张 urre 表 + 26 张业务表 DDL 全文仍在原始文档中，指针见 `04` §5.1；其余未逐项指明的内容见 `07` §5 第 12–21 项的分组指引）。工程师开工时须同时备有本目录与原始文档。**
 
 ## 0. 先说清三件事（读之前必读）
 
@@ -12,7 +12,7 @@
 
 原始材料中最严重的 P0 问题是：**PRD 与设计文档不是同一产品的同一阶段。**
 
-- PRD 是面向优化师的端到端产品「AI乘风引擎」：找片、看片、拆段、复刻、二创、全链路跟品，带前端画布、个人资产、500 并发、Q4 上线 MVP。
+- PRD 是面向优化师的端到端产品「万镜魔方」（原型界面名；对话问候用「乘风智能体」。v1.6，2026-11-13，文本版）：找片、看片、拆段、复刻、二创、全链路跟品，带前端画布、个人资产、约 500 名优化师同时在线（评估 500–1000 峰值）、Q4 上线 MVP。v1.6 沿用 v1.4 的 17 节结构，REQ/OI/DR/NFR 编号与 v1.4 §17 一致；两者冲突时以 v1.6 为准。v1.4 的逐步审批、按卖点手动查投放视频、按线路创建预算广告草稿属于旧流程，已废止（v1.6 OI-11），不进入 v1.0。
 - 设计文档是后端一个 Mock-first 切片：Video Domain Agent + 跨域编排契约，明确不交付前端、真实检索、媒体执行、真实领域。
 
 **最终版 v1.0 的裁决（冻结，不可再议）：**
@@ -37,6 +37,8 @@
 
 **字段级权威只有一份：`04`。** 其它文档出现字段名、枚举、类型与 `04` 不一致时，以 `04` 为准，视为其它文档的笔误。
 
+**引用规范（2026-11-16 补录，源 `04` §1.2）：** 阅读开源项目与外部资料时，必须区分三级证据——（1）代码已实现：可在仓库具体文件、函数、接口或测试中找到；（2）项目文档声明：README、架构文档或论文描述，但尚未逐项核对实现；（3）本文设计建议：为适配目标业务而提出的方案，不代表参考项目已经实现。正式选型前应固定 commit SHA，并对关键路径做本地源码复核；不把 GitHub Star 数当成技术成熟度或生产可用性的证明。
+
 ### 0.3 文件地图
 
 | 文件 | 内容 | 来源（合并） |
@@ -46,10 +48,10 @@
 | `02_URRE检索推荐_最终版.md` | URRE 四类能力、流水线、模型分工、反馈、指标（冻结 Schema v1.0 引用 `04`） | 01 URRE + 05 数据模型（检索部分） |
 | `03_AgentRuntime与VideoDomainAgent_最终版.md` | Runtime、Session/Plan/Task/Checkpoint/Artifact、Router、预算、质量门、多 Agent、Video Agent、跨域编排 | 02 Runtime + 03 + impl_04 + impl_07 |
 | `04_API数据契约与存储_最终版.md` | 全部 API、JSON Schema、枚举、错误码、DDL、索引、迁移、Mock Fixture | impl_01 + impl_05 + 05（存储部分） |
-| `05_实施路线图_Backlog与验收_最终版.md` | 唯一排期（9–13 周）、42 Ticket 修订版、验收数值表、纵向切片 | impl_00 + impl_02 + impl_03 + impl_06 |
+| `05_实施路线图_Backlog与验收_最终版.md` | 唯一排期（9–13 周）、44 Ticket 修订版、验收数值表、纵向切片 | impl_00 + impl_02 + impl_03 + impl_06 |
 | `06_评审与验收报告.md` | 独立评审 BOT 的评审结论与验收勾选表（评审后填写） | 新增，评审 BOT 填写 |
 | `07_问题清单与裁决记录.md` | A/B/C 三组全部 P0/P1/P2 问题、处置、REQ 映射、ADR 映射 | 新增 |
-| `08_附录_核心契约正文.md` | 状态机、CandidateSet JSON Schema、请求示例、错误码表、完成定义 15 条、A01–A31、Ticket/Sprint 对照、ADR 映射 42 行、索引清单 | 新增（评审 R-02/R-07/R-09 后补写） |
+| `08_附录_核心契约正文.md` | 状态机、CandidateSet JSON Schema、请求示例、错误码表、完成定义 15 条、A01–A31、Ticket/Sprint 对照、ADR 映射 50 行、索引清单 | 新增（评审 R-02/R-07/R-09 后补写） |
 
 原始文档的交叉引用（`implementation/…`、`C:\Users\Administrator\…`）在本目录中**全部改为相对路径**（`./01_…` 等）或删除。`implementation/` 前缀不再使用。
 
@@ -72,19 +74,23 @@
 | 质量门阈值 | 80 分（满分 100），换算公式见 `03` §6；低于 80 分进入修订，最多 2 轮，保留最佳版本 | `03` §6 |
 | 副作用等级 | L0 只读 / L1 分析 / L2 预览 / L3 修改 / L4 外部副作用；L3 须明确确认，L4 须强审批 + 明确授权 | 02 §7.3 |
 | Mock Fixture | 固定：4 Video / 9 Clip（video_001: clip_001–003, clip_008；video_002: clip_003–004；video_003: clip_005–006；video_004: clip_007, clip_009）；**语义相似视觉不同的一对冻结为 clip_003 / clip_004**（补 C 组 P2-2 缺口） | impl_05 §11；`04` §7 |
+| CandidateSet v1.0 | 顶层与条目两级字段表见 `04` §3（2026-11-16 补录，按 impl_01 §5 恢复；Video 候选与 Clip 候选均可表示） | `04` §3；impl_01 §5 |
+| Artifact Envelope 8 类 | `campaign-brief`、`workflow-plan`、`product-context`、`landing-page-plan`、`copy-package`、`video-creative-artifact`、`ads-draft`、`review-package`（2026-11-16 补录，按 impl_07 §6.2 恢复；初版的 `product-brief`、`landing-page-package`、`video-plan`、`clip-assignment` 为无来源改写，现废止） | impl_07 §6.2；`01` §6 |
+| Agent Tool 8 个 | `get_project_context`、`search_video_materials`、`recommend_video_materials`、`find_similar_materials`、`resolve_evidence`、`create_artifact_draft`、`assign_materials`、`request_user_confirmation`（2026-11-16 补录，按 impl_01 §7 恢复；初版的 `search_clips`/`recommend_clips`/`similar_clips`/`get_clip_detail`/`create_storyboard`/`create_clip_plan`/`assign_material` 为无来源改名/拆分，现废止） | impl_01 §7（= impl_04 §10.2 = impl_05 §9.2）；`03` §4.2 |
 | 验收数值 | 见 `05` §6 验收数值表（Mock 阶段：确定性、隔离、恢复、延迟均有数值；生产 SLO 不承诺） | `05` §6 |
+| 覆盖率 80–85%→约 95% | 评测目标（v1.6 §16 原文核实；v1.4 图片版时未核实，现以 v1.6 文本为准）。真实检索指标，**不在 v1.0 验收范围** | `02` §9 |
 | 排期 | **唯一排期：9–13 周，阶段 0–6**（见 `05` §2）。impl_03 §4 的 Day 1–10 总计划作废，不再另设 Day 清单 | `05` §2（解决 C 组 P0-3） |
 
 ## 2. 术语表（冻结）
 
 | 术语 | 定义 | 不得混用 |
 |---|---|---|
-| Video | 完整视频资产 | — |
-| Clip | Video 内可独立发现和引用的连续片段，唯一片段层级；字段 `clip_id`、`video_id`、`start_ms`/`end_ms`、`preview_ref`、`semantic_summary`、`quality_flags` | Shot、Segment、切片（对照表外不得再用） |
+| Video | 完整视频资产；字段见 `04` §4 | — |
+| Clip | Video 内可独立发现和引用的连续片段，唯一片段层级；字段（13 个，与 `04` §4 逐字一致）：`clip_id`、`video_id`、`start_ms`、`end_ms`、`duration_ms`、`preview_ref`、`keyframe_ref`、`semantic_summary`、`tags`、`quality_flags`、`availability`、`feature_version`、`model_versions` | Shot、Segment、切片（对照表外不得再用） |
 | Storyboard | 叙事结构（计划侧） | — |
 | ClipPlan | 执行计划（计划侧） | — |
-| ClipRequirement | 计划中的一条目标；字段含 `storyboard_clip_id`（如 `sb_clip_001`）、`duration_target_ms` | 槽位（PRD 术语；映射见 `07` §1，槽位的起止时间/封面在 v1.0 无对应字段，属缺口） |
-| MaterialAssignment | 素材候选到计划 Clip 的绑定 | — |
+| ClipRequirement | 计划中的一条目标；字段（8 个，与 `04` §4 逐字一致）：`storyboard_clip_id`（如 `sb_clip_001`）、`narrative_role`、`visual_goal`、`duration_target_ms`、`hard_constraints`、`soft_preferences`、`fallback_requirements`、`evidence_requirements` | 槽位（PRD 术语；映射见 `07` §1，计划侧 ClipRequirement 无起止时间／封面字段，属缺口；资产侧 Clip 已有 `start_ms`／`end_ms`／`preview_ref`，见 `04` §7） |
+| MaterialAssignment | 素材候选到计划 Clip 的绑定；字段见 `04` §4（含 `entity_ref` 与 `status` 枚举） | — |
 | CandidateSet | 检索返回的候选集合 + 证据；Schema v1.0 见 `04` §3 | — |
 | Artifact | 可引用、可版本化的阶段成果；跨域用统一 Envelope，8 类（见 `01` §6） | — |
 | Task / Run | Task 是平台侧业务任务聚合；Run 是 Runtime 侧单次执行实例；Task 与 Run 是投影关系，不是同一枚举 | 不得用 Run 状态替代 Task 状态 |
@@ -109,6 +115,8 @@
 | C-05 | 降级 java-examples 误引（CallerToolContinuation 等）为“待对源码核验” | B P0-4 |
 | C-06 | 排期二选一：保留 9–13 周，作废 Day 1–10 总计划 | C P0-3 |
 | C-07 | 验收基线补数值表 | A P0-5；C P0-4 |
-| C-08 | ADR 三套并一套，42 个旧编号逐行映射（`07` §4）；`VDA-ADR-01–14` 真实存在于 impl_04 §16，并入单套编号（非删除） | C P1-5 |
+| C-08 | ADR 四套并一套，50 行（ADR/IMPL-ADR/VDA-ADR 各 14 行 + XDA-ADR 8 行，`07` §4）；`VDA-ADR-01–14` 真实存在于 impl_04 §16，并入单套编号（非删除） | C P1-5 |
+| C-12 | **2026-11-16 覆盖核查补录修订（见 `work/coverage-audit-2026-11-16.md` 与 `work/remediation-dispositions.md`）：**（1）CandidateSet 字段恢复（impl_01 §5，字段表见 `04` §3）；（2）Artifact Envelope 8 类恢复（impl_07 §6.2）；（3）Agent Tool 8 个恢复（impl_01 §7）；（4）评分 13 项与子权重（impl_04 §9，顶层权重仍冻结 `clip_fit` 0.7 / `collection_fit` 0.3）；（5）MaterialAssignment `entity_ref` 与 `status` 枚举（impl_00 §3.3 / impl_01 §3.3，见 `04` §4）；（6）Search `strategy_id` 冻结为 `video_mock_hybrid_v1`、`strategy_version` 为 `1.0`（strategy_id 源 impl_05 §6.1；strategy_version 源 05 §8.1，05 §8.1 的 `video-hybrid` 未采纳）；（7）XDA-ADR-01–08 并入 ADR 映射，共 50 行（impl_07 §2）；（8）V1–V4 迁移分配表（新增裁决，见 `04` §5.1：V1 业务核心表 17 张、V2 URRE 表 23 张、V3 Task/Workflow 表 8 张、V4 反馈/Outbox 3 张，合计 51 张）；（9）Sprint 错位修正：VDA-032（阶段 1）→S2、VDA-031（阶段 5）→S7、S5 只留 VDA-025–026；（10）阻断项 12→15（impl_06 §11 实测 15 条）；（11）状态机边数 17→18；（12）公开 API“5 个检索类 POST”修正，新增 Evidence Resolve（`POST /v1/evidence/resolve`，源 impl_01 §4.5，见 `04` §2.7）；（13）Plan Schema 补 `constraints`、`steps`、`acceptance_criteria` 字段（02 §4.1，见 `04` §5.2）；（14）SearchPlan Schema（impl_01 §4.2 / impl_05 §8.3，见 `04` §2.8）；（15）Intent Schema 最小字段集（源 04 §4.3，见 `01` §4）；（16）`00` §0.2 新增“引用规范”（三级证据 + 固定 commit SHA + 不把 Star 数当成熟度，源 04 §1.2）；（17）`availability` 枚举补齐 `unavailable`（最终版新增冻结值，原始文档只举例 `available`）。**本轮补录/恢复原文已有内容并修正事实错误；新增冻结值仅（6）与（17）两项。** | 覆盖核查 |
 | C-09 | Explore 延期；04 §4 隔离；推荐仅 `clip_candidate` 全文档统一 | A P0-6；C P1-1、P1-2 |
 | C-10 | 全部交叉引用改为相对路径，删除 Windows 绝对路径 | A §4；C P0-5 |
+| C-11 | **2026-11-16 修订，对齐 PRD v1.6（2026-11-13 文本版）：** PRD 引用从 v1.4 图片版改为 v1.6；`07` §1 补 REQ-A02–A05、C07、F01–F07 与 NFR-03/04/07–11，`07` §5 关闭第 7 项（覆盖率引用已核实）并补 OI-02–04/06–08/10–13；`04` §4 REQ-E06 待确认项由 OI-05 更正为 OI-11；`03` §3/§8 补 BR-12/BR-13 映射，`02` §3 补 BR-03 语义规则；`05` §7 里程碑按 v1.6 §17.5 核实。**Schema、预算、状态机、排期、ADR、Mock Fixture 均未变。** 独立评审 R2-01–R2-13（1 P1 + 9 P2 + 3 P3）已按清单整改，均为单行文字修正（见 `06` 修订记录）。 | PRD v1.6 |
