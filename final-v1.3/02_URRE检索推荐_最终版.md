@@ -26,7 +26,7 @@ Explore 结果必须在 CandidateSet 中显式标记探索原因，不能伪装�
 
 规范化 → 理解 → 策略 → 多路召回 → 合并 → **硬过滤（在排序之前）** → 排序 → 重排 → 证据 → 响应。
 
-- 硬过滤必须在排序之前；过滤条件只允许注册字段（注册字段清单见 `04` §2.4，v1.0 冻结清单）。注（v1.1）：`product_id` 尚不在 `04` §2.4 注册字段清单内（清单仅 `status` / `duration_ms` / `video_id` / `tenant_id`）；精确商品检索的 ID 相等匹配在意图层执行（见下），02 不改 Schema v1.0。合稿裁决：`04` §2.4 为 v1.0 冻结清单，v1.1 未补 `product_id`；注册字段扩展待 ADR/后续版本。入口层 `product_id` 见 `04` §9.1（`find_hot` 须 `query | product_id | reference_media` 三选一）。
+- 硬过滤必须在排序之前；过滤条件只允许注册字段（注册字段清单见 `04` §2.4，v1.0 冻结清单）。精确商品检索的 ID 相等匹配在意图层执行（见下），02 不改 Schema v1.0。入口层 `product_id` 见 `04` §9.1（`find_hot` 须 `query | product_id | reference_media` 三选一）。
 - 商品 ID 检索语义（v1.6 BR-03）：查询含连续至少五位数字、或明确写商品 ID／产品 ID 时，意图层优先判为精确商品检索，先按 ID 相等匹配；无匹配时可展示默认样例。真实同商品纯净结果与零召回待接入，Mock 阶段按 Fixture 行为。商品对象以 PRD §17.2 DR-12 为准（输入 ID 能查到名称和图片）；检索侧只消费 ID 相等结果，不自造商品解析。
 - 每路召回独立超时、独立上限、独立监控、可降级。通道超时与上限见 §4。
 - 融合用 RRF（Reciprocal Rank Fusion），**不得直接比较跨库原始分数**。RRF 参数冻结：`k=60`（标准 RRF 常数，v1.0 冻结值；原始文档只提名字无数值，现补齐）。
@@ -299,7 +299,7 @@ Recommendation v1.0 冻结值：`strategy_id=video_mock_clip_fit_v1`（impl_01 �
 
 - 状态（PRD §17.2 DR-16）：排队、生成中、完成、失败；资产筛选：全部、进行中、已完成、失败（PRD §10）。
 - 可见性规则：只有完成态资产进入检索候选池（可检索、可引用）；排队/生成中态尚无结果视频（PRD §10 资产详情含原视频、结果视频、分镜与生成提示词），仅在资产页可见进度，不进入候选；失败态不进入候选。
-- 失败态重试：重试契约待确认（PRD §17.4 OI-07：调画幅、合成、口播、图像修改等真实服务及失败重试契约）。
+- 失败态重试：重试契约接入时冻结（PRD §17.4 OI-07；v1.3 不再逐项跟踪）。
 - 隔离与保护期：资产按账号隔离（PRD §16；PRD §17.3 NFR-06）；保护期内仅创建者可见、可分享（PRD §17.3 NFR-10）；产出 15 天保护期后回流公共库（PRD §16；PRD §1 G4；PRD §17.1 REQ-E02）；回流后进入公共检索池，回流后的槽位与提示词补加工待确认（PRD §17.4 OI-05；PRD §16：回流后的槽位与提示词补加工待确认）——回流后是否立即全量可检索，待 OI-05 关闭后定，v1.1 不预设。
 - 对象：`PersonalAsset` Schema 本体见 `04` §9.8（字段：`asset_id` / `owner_user_id` / `task_id` / `asset_kind` / `status` queued/generating/completed/failed / `protection_until` 创建时间 + 15 天 / `visibility` owner_only/shared，回流后 public / `reflow_status` protected/reflowed/pending / `source_product_id`；回流后加工与共享交接待确认，OI-05）。
 

@@ -1,6 +1,7 @@
 # 03 Agent Runtime 与 Video Domain Agent（最终版 v1.0）
 
 > v1.1 修订注记（2026-11-16）：依据覆盖分析 + PRD v1.6 修订。改动摘要：保持 8 Tool 窄边界，新增声明式 MediaActionPlan 与 Media Capability Workflow 编排语义（§4.5）；补四入口显式路由映射（§4.3）与六项技能 Agent 侧编排（§4.6）；补槽位交互状态与合成前校验（§9）、跟品链路纠正（§10）、会话快照与恢复（§11）。冻结值（状态机 18 边、CandidateSet Schema、预算、Ticket 总数 44、ADR-01–ADR-18）一律未动；新增断言均带来源标注，无来源的改写一律未写。
+> **v1.2 修订注记（2026-11-16）：§4.5.3 状态注记升级为状态投影表（ADR-19）+ 契约测试（`08` §11 T-SM）；新增 §4.7 技能追问状态机（ADR-20）+ T-CM 契约测试；§4.6 补演示视频来源标记与 §4.7 指针。冻结值（状态机 18 边、CandidateSet Schema、预算、Ticket 总数 44）一律未动；ADR 单套编号扩展为 ADR-01–21。**
 > 权威顺序第 4 位。字段级权威见 `04`。
 > 来源：02 Runtime + 03 VideoDomain + impl_04 + impl_07，合并后修正冲突、补数值。
 
@@ -180,7 +181,7 @@ execute_step:
 
 ### 4.5 MediaActionPlan 与 Media Capability Workflow（新增，v1.1）
 
-> 依据：覆盖分析 §7.1/§7.2/§10.1；PRD §5 六项技能、§7 槽位去生成、§8 生成、REQ-C04/C06/D02/D03、OI-07。**范围声明：** 本节只定义 Agent 侧编排语义与 Mock/Adapter 边界；真实媒体服务（调画幅、合成、口播、图像修改等）的服务选型与失败重试契约待确认（PRD OI-07），不改变 `01` §8 ADR-09 的 v1.0 交付范围判定——v1.1 不宣称真实媒体执行已交付。
+> 依据：覆盖分析 §7.1/§7.2/§10.1；PRD §5 六项技能、§7 槽位去生成、§8 生成、REQ-C04/C06/D02/D03、OI-07。**范围声明：** 本节只定义 Agent 侧编排语义与 Mock/Adapter 边界；真实媒体服务（调画幅、合成、口播、图像修改等）的服务选型与失败重试契约接入时冻结（PRD OI-07，v1.3 不再逐项跟踪），不改变 `01` §8 ADR-09 的 v1.0 交付范围判定——v1.1 不宣称真实媒体执行已交付。
 
 #### 4.5.1 窄边界（冻结，不变）
 
@@ -199,19 +200,35 @@ execute_step:
 #### 4.5.3 Media Capability Workflow 状态机（新增定义）
 
 - Media Capability Workflow 是独立于 Video Domain Agent 的执行 Workflow，由主 Workflow（`video_only` / `cross_domain_campaign`，§8）或技能任务（§4.6）调用；Agent 只提交 MediaActionPlan，不直接调用 Workflow 内部步骤（源 覆盖分析 §7.2/§10；`01` §2 INV-01 类比：跨执行边界只经 Workflow 调用）。
-- 执行状态（v1.1 新增编排定义）：以下状态名与迁移为本 Workflow 的执行编排定义——状态名非 PRD 原文值（PRD 只给任务状态语义：BR-12 暂停/继续、BR-13 分项失败、NFR-04 异步、NFR-09 恢复），未冻结；不改动 §3 Task 状态机（18 边冻结）与 §8.2 的 DomainInvocation 6 态枚举（`started` / `succeeded` / `partial` / `needs_user_action` / `failed` / `cancelled`）。三套状态词汇的适用范围：本图状态为 Workflow 执行编排状态；MediaActionPlan 计划级 `status`（`04` §9.4：`pending` / `running` / `partial` / `succeeded` / `failed` / `cancelled`）为计划聚合状态（`pending` ≈ 未开始的 Created/Queued，`running` ≈ Running，其余一一对应）；SkillTask 任务级 `status`（`04` §9.3：`submitted` / `running` / `waiting_input` / `succeeded` / `failed` / `cancelled`）为技能任务状态，其中 `waiting_input` 对应执行侧的 NeedsUserAction：
+- 执行状态（v1.1 新增编排定义；v1.2 投影表取代注记）：以下状态名与迁移为本 Workflow 的执行编排定义——状态名非 PRD 原文值（PRD 只给任务状态语义：BR-12 暂停/继续、BR-13 分项失败、NFR-04 异步、NFR-09 恢复），未冻结；不改动 §3 Task 状态机（18 边冻结）与 §8.2 的 DomainInvocation 6 态枚举（`started` / `succeeded` / `partial` / `needs_user_action` / `failed` / `cancelled`）。
+- **状态投影表（v1.2 新增，唯一事实源，ADR-19）：Workflow 执行状态是唯一事实源；MediaActionPlan `status`（`04` §9.4）是计划聚合投影；SkillTask `status`（`04` §9.3）是任务级投影。投影由平台状态投影器（State Projector，平台自建，不属 SDK）计算；Agent 与 Workflow 均不直接写对方的状态字段。v1.1“其余一一对应”句作废——Partial 与 NeedsUserAction 两行不是一一对应，见下表：**
+
+| Workflow 执行状态 | MediaActionPlan `status`（聚合） | SkillTask `status`（任务级） | 说明 |
+|---|---|---|---|
+| Created | `pending` | `submitted` | 计划已创建，未入队 |
+| Queued | `pending` | `submitted` | 已入队，未派发 |
+| Running | `running` | `running` | 任一动作执行中 |
+| NeedsUserAction | `running`（计划未终结） | `waiting_input` | 执行暂停等用户；计划不写等待态，因为计划本身不等待用户，只有任务等待用户 |
+| Succeeded | `succeeded` | `succeeded` | 全部动作成功 |
+| Partial | `partial` | `succeeded` + `result.partial=true` + `missing_items` | 部分成功不是失败：任务级记成功，但结果须列缺失项并在结果卡标注“部分完成”（`04` §9.3） |
+| Failed | `failed` | `failed` | 终态。到达 Failed 之前，Adapter 层自动重试已按 `04` §10.1 执行过（仅 `category=retryable` 的错误，次数为配置项 `max_retries`，接入时冻结）；耗尽后才落 Failed。出边只有一条受控重派发：`Failed --> Queued: retry [category=retryable]`（手动 / 策略触发，非自动；`non_retryable` 无此边） |
+| Cancelled | `cancelled` | `cancelled` | 已完成动作产物保留，未开始动作不再执行 |
+
+- **写路径（v1.2 新增）：** SkillTask `status` 只由状态投影器写，事件源为 Workflow 事件；例外两项经投影器落盘——创建时 `submitted`、用户取消时 `cancelled`。MediaActionPlan `status` 只由聚合器写。Agent 不得直接写以上两个字段；直接写视为越权调用，须被 Policy 门拦截（§6）。投影计算为纯函数（输入 Workflow 事件序列 → 输出两投影状态），契约测试见 `08` §11（T-SM-00–13、负向 T-SM-N1–N3）。
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Created
+  [*] --> Created: plan_created
   Created --> Queued: plan_accepted
   Queued --> Running: dispatched
   Running --> Succeeded: all_actions_done
-  Running --> Partial: some_actions_failed
+  Running --> Partial: some_actions_incomplete
   Running --> NeedsUserAction: needs_user_action
   NeedsUserAction --> Running: resume
+  NeedsUserAction --> Cancelled: cancel
   Running --> Failed: failed_irretryable
-  Failed --> Queued: retry
+  Failed --> Queued: retry [category=retryable]
+  Partial --> Queued: retry_failed [category=retryable]
   Running --> Cancelled: cancel
   Queued --> Cancelled: cancel
   Succeeded --> [*]
@@ -220,10 +237,11 @@ stateDiagram-v2
   Cancelled --> [*]
 ```
 
+- **终态转移标签定义（v1.2 整改 R12-12；复核 N2-02 同步）：** `some_actions_incomplete`（→ Partial）⟺ `04` §9.4 聚合规则 (6)：≥1 动作 `succeeded` 且 ≥1 动作 `failed` / `skipped` / `cancelled`（含用户取消剩余动作）；`failed_irretryable`（→ Failed）⟺ 聚合规则 (7)：0 动作 `succeeded` 且 ≥1 动作 `failed`、其余动作已终结，计划零产出。`category`（`retryable` / `non_retryable`）只决定失败后是否可重试（§4.5.3 重试三层），不决定 Partial/Failed 的标签。
 - 异步：耗时动作（生成、擦除、合成等）异步执行，提交后用户可继续操作，结果可找回（源 PRD §1 G3、§8、NFR-04、NFR-09）。
 - 进度：Workflow 按动作逐项上报进度；处理进度不抢用户的阅读、报告焦点或已经保存的手工修改（源 PRD §11 第 3 条）。
-- 重试：可重试失败按 §5.3 口径——领域调用重试最多 2 次（指数退避 500ms → 1000ms）；重试复用原 `invocation_id`，不产生重复 Artifact（源 §5.3、§8.3；`04` §7.1 跨域 Mock 故障场景）。
-- 取消：调用方可取消未开始或执行中的动作；取消后已完成动作的产物保留，未开始动作不再执行（源 §8.2“领域调用可取消”；§8.3 补偿清单）。
+- 重试（三层，各自计数，v1.2 整改 R12-01）：(1) **Adapter 层自动重试**——单个动作调用内按 `04` §10.1 执行：仅 `category=retryable` 的错误，指数退避 500ms → 1000ms，次数为配置项 `max_retries`（接入时冻结）；`non_retryable` 不重试。(2) **Workflow 层受控重派发**——`Failed --> Queued: retry [category=retryable]`（手动 / 策略触发，非自动）；`Partial --> Queued: retry_failed [category=retryable]`（仅失败动作重跑，成功动作结果保留）。(3) **SkillTask 层用户重试**——`failed → submitted`（`03` §4.7），仅 `error.category=retryable` 时显示重试入口。三层不累计、不混用；`§5.3` 的“领域调用重试最多 2 次”是跨域调用口径，**不**适用于媒体执行层（v1.1 借用句已删除）。重试复用原 `invocation_id`，不产生重复 Artifact（源 §5.4；`04` §7.1 跨域 Mock 故障场景）。
+- 取消：调用方可取消未开始、执行中或暂停等待中的动作；取消后已完成动作的产物保留，未开始动作不再执行（源 §8.2“领域调用可取消”；§8.3 补偿清单）。
 - 恢复：刷新 / 重开后按 Checkpoint 与原 `requestId` / `runtime_run_id` 回读恢复（§5.4）；生成中的任务刷新后仍能从资产和会话打开（源 PRD NFR-09、§12、BR-26；AC-11）。
 
 #### 4.5.4 与 Agent Runtime 的调用边界
@@ -249,7 +267,7 @@ stateDiagram-v2
 | 提取字幕 | 视频引用 | 无指定素材时采用演示视频，不追问（源 PRD §5） | SkillTask → MediaActionPlan `subtitle`（§4.5） | 对话返回可复制文字 |
 | 配口播 | 文本、语言、音色 | 缺业务参数时在对话追问（源 PRD §5） | SkillTask → MediaActionPlan `voiceover`（§4.5） | 返回可原生试听、下载的示例音频 |
 | 擦除元素 | 处理对象（要求） | 缺处理对象时在对话追问（源 PRD §5） | SkillTask → MediaActionPlan `erase_object`（§4.5）；根据要求显示处理对象 | 返回视频样例 |
-| 调整画幅 | 目标画幅 9:16 / 1:1 / 16:9 | 缺画幅时追问（源 PRD §5） | SkillTask → MediaActionPlan `change_aspect_ratio`（§4.5） | 返回对应画幅样例；真实处理接口待确认（OI-07） |
+| 调整画幅 | 目标画幅 9:16 / 1:1 / 16:9 | 缺画幅时追问（源 PRD §5） | SkillTask → MediaActionPlan `change_aspect_ratio`（§4.5） | 返回对应画幅样例；真实处理接口接入时冻结 |
 | 片段生成 | 镜头描述 | 缺镜头描述时追问（源 PRD §5） | SkillTask → MediaActionPlan `generate_clip`（§4.5） | 返回视频样例；默认 9:16、8 秒，时长参数限制 3–15 秒 |
 | 卖点浮层 | 引号中的卖点文案 | 缺引号中的卖点文案时追问（源 PRD §5） | SkillTask → MediaActionPlan `overlay_selling_point`（§4.5） | 返回带浮层的示例视频 |
 
@@ -258,17 +276,67 @@ stateDiagram-v2
 - BR-01 技能优先（§4.3）：用户选了六项技能之一，或在可用的技能会话中用技能名称发起请求时，使用该技能的输入、追问和输出约定；一次选一项，切换保留文字和附件，删除技能标签清理任务选择；技能追问未回答时，后续输入补到该任务。
 - 技能过程只显示流式说明（源 PRD §5）。
 - 视频结果完成后保持对话，点击才在右侧打开对应视频，历史结果仍能各自打开（源 PRD §5）。
-- 异步状态：SkillTask 状态见 `04` §9.3（`submitted` / `running` / `waiting_input` / `succeeded` / `failed` / `cancelled`）；与 Workflow 执行状态（§4.5.3）的对应关系见 §4.5.3 注记。生成中可继续浏览，失败可重试，任务可以恢复（源 覆盖分析 §2.1；PRD NFR-04/NFR-09；AC-11）。
+- 异步状态：SkillTask 状态见 `04` §9.3（`submitted` / `running` / `waiting_input` / `succeeded` / `failed` / `cancelled`）；与 Workflow 执行状态的对应关系见 §4.5.3 状态投影表（v1.2：注记升级为投影表 + 契约测试，见 `08` §11）。生成中可继续浏览，失败可重试，任务可以恢复（源 覆盖分析 §2.1；PRD NFR-04/NFR-09；AC-11）。
+- 演示视频来源标记（v1.2 新增）：需视频的技能无指定素材时采用演示视频，`input_media_ref.source=demo` 必须显式标记（`04` §9.3）；演示视频为具名版本化资产，资产 ID 不再登记（v1.3 已取消 V12-03 待确认项）；结果卡须显式标注“演示视频”；demo 产物不得进入个人资产、回流与分享。
+- 追问状态机：见 §4.7（v1.2 新增）。
 - 结果卡：每个技能结果独立结果卡，挂在当前会话与对应视频 / 槽位；切换操作或槽位保留已打开结果，收起或关闭只影响对应结果卡（源 PRD §7 多个结果、§8）。
-- 失败重试：技能媒体错误可重试（源 PRD §13）；重试口径见 §5.3；重试复用原 `invocation_id`（源 §5.4）。
+- 失败重试：技能媒体错误可重试（源 PRD §13）；重试口径见 §4.5.3（三层重试）与 `04` §10.1；仅 `category=retryable` 的错误可重试（`non_retryable` 时重试入口不显示；BR-13 收窄偏差见 §4.7 `failed` + `retry` 行与 `07` §7 V12-09）；重试复用原 `invocation_id`（源 §5.4）。
 - 验收占位：AC-03（字幕可复制，口播可试听 / 下载，四种视频点开才进对应画布，历史仍可打开）。
-- 待确认项保留原型行为（源 PRD OI-10：技能目录、技能市场、中台同步、翻译和脚本等能力的 Q4 范围待确认；OI-07：真实服务待确认）：本节不删除、不排除任何一项 P0 技能（REQ-D02/D03 均为 P0），只给 Mock 方案 + Adapter 边界（§4.5）+ 验收占位 AC-03。
+- 待确认项保留原型行为（源 PRD OI-10：技能目录、技能市场、中台同步、翻译和脚本等能力的 Q4 范围待确认；OI-07：真实服务接入时冻结）：本节不删除、不排除任何一项 P0 技能（REQ-D02/D03 均为 P0），只给 Mock 方案 + Adapter 边界（§4.5）+ 验收占位 AC-03。
+
+### 4.7 技能追问状态机（v1.2 新增）
+
+> 依据：PRD §5、BR-01；PRD §8、§12、NFR-09；覆盖分析 §2.3。v1.1 只有四条文字规则（追问未答后续输入补到任务、切换保留正文与附件、当前技能只保留一项、失败可重试），分支未画全；本节补全状态转移。SkillTask 字段见 `04` §9.3（`active` / `pending_slot` / `supplementary_inputs`）；状态投影关系见 §4.5.3；契约测试见 `08` §11（T-CM-01–18、负向 T-CM-N1）。
+
+```mermaid
+stateDiagram-v2
+  [*] --> submitted
+  submitted --> waiting_input: ask（缺参）
+  submitted --> running: params_complete
+  submitted --> cancelled: cancel
+  running --> waiting_input: needs_user_action
+  waiting_input --> running: answer_slot（命中待填槽位）
+  waiting_input --> waiting_input: answer_unmatched（未命中，追加补充说明）
+  waiting_input --> cancelled: cancel / decline（明确拒绝视为 cancel）
+  running --> cancelled: cancel
+  running --> succeeded: all_done
+  running --> succeeded: partial（result.partial=true）
+  running --> failed: failed_irretryable
+  succeeded --> submitted: retry_failed [partial] [category=retryable]
+  failed --> submitted: retry [category=retryable]
+  succeeded --> [*]
+  failed --> [*]
+  cancelled --> [*]
+```
+
+| 当前状态 | 事件 | 下一状态 | 动作与约束 |
+|---|---|---|---|
+| `submitted` | `ask`（缺参） | `waiting_input` | `pending_slot`= 缺失槽位名；多槽位缺失时一次只记一个，按提问顺序逐个追问 |
+| `submitted` | `params_complete`（参数齐） | `running` | 提交 MediaActionPlan，进入 §4.5 执行 |
+| `submitted` | `cancel`（删除技能标签） | `cancelled` | 提交后、追问前删除技能标签是 BR-01 允许的真实可达路径；plan 已提交未派发时同时取消 plan；无产物清理；`pending_slot` 为 null（本态无追问）、`supplementary_inputs` 为空、`active` 置 `false` |
+| `running` | `needs_user_action`（执行侧需确认） | `waiting_input` | `pending_slot`= 执行侧需确认项，记为 `confirm:<动作>`（见回答判定）；Workflow 进入 NeedsUserAction（§4.5.3） |
+| `waiting_input` | `answer_slot`（命中待填槽位） | `running` | `pending_slot` 置 null；执行前缺参 → 补参后提交 plan；执行中 → resume Workflow |
+| `waiting_input` | `answer_unmatched`（未命中） | `waiting_input`（不变） | 输入追加进 `supplementary_inputs`（append-only）；不清除 `pending_slot`；复述待回答问题一次；连续未命中不自动取消、不猜测填槽 |
+| `waiting_input` / `running` | `switch_skill`（切到另一技能） | 状态不变，`active=false` | **交互态冻结**（`pending_slot`、`supplementary_inputs` 不变，不再向该任务路由新输入、不再追问）；**执行态仍由投影推进**：Running 中的任务完成时 `status` 可经投影变为 `succeeded` / `failed`（§4.5.3），结果回写后不抢焦点；正文与附件保留在会话（BR-01） |
+| `waiting_input` / `running` | `resume_skill`（切回已有 SkillTask 的技能） | 状态不变，`active=true` | 会话内同一时间仅一个 `active=true` 的 SkillTask；切换是原子操作：旧任务置 `false` 与新任务置 `true` 在同一转移内完成，不存在零个或两个 active 的中间态；切到尚无 SkillTask 的技能时走 `switch_skill`（新建 SkillTask，`submitted`，`active=true`）——首次到达不是“切回”，不用 `resume_skill` 事件名；切回不重置 `pending_slot` 与 `supplementary_inputs` |
+| `waiting_input` / `running` | `cancel`（删除技能标签 / 用户取消） | `cancelled` | 执行中同时取消 Workflow；已完成动作产物保留（§4.5.5）；`pending_slot` 置 null；`supplementary_inputs` 保留（审计）；`active` 置 `false` |
+| `succeeded`（`result.partial=true`） | `retry_failed`（重试失败分项） | `submitted` | 仅失败动作重跑，成功动作结果保留（BR-13 同款口径）；`retry_count` +1；须失败动作的 `error.category=retryable`（全部失败动作均 `non_retryable` 时重试入口不显示）；Workflow 侧走 `Partial --> Queued: retry_failed`（§4.5.3） |
+| `failed` | `retry` | `submitted` | `retry_count` +1，复用原 `invocation_id`（§5.4）；仅 `error.category=retryable` 时显示重试入口，`non_retryable` 时不显示；`max_retries` 为配置值，接入时冻结，重试状态转移本身与次数无关。偏差注记（复核 N2-03）：PRD BR-13 原文为无条件表述（“整轮结束若仍有失败，显示对应重试入口”）；v1.2 将重试入口收窄为仅 `category=retryable` 的失败——`non_retryable` 失败显示失败原因与替代操作，不显示重试入口；依据：对不可重试的失败显示重试入口会误导用户反复提交注定失败的调用；该收窄为设计裁决，见 `07` §7 V12-09 |
+| `running` | `all_done` / `partial` / `failed_irretryable` | `succeeded` / `succeeded`（+`result.partial=true`）/ `failed` | Partial 的缺失项见 `04` §9.3；`non_retryable` 失败直接落 `failed` 不重试（`04` §10.1） |
+
+**回答判定（v1.2 新增；v1.2 整改 R12-04：覆盖确认分支）：** `waiting_input` 有两类待决项，以 `pending_slot` 的形式区分：(1) **槽位追问**——`pending_slot` 为槽位名：输入是否命中，以该技能 `task_params` 必填槽位校验为准（`04` §9.3 分表）：通过校验的槽位值即命中；未通过即未命中。判定不依赖输入长度、不猜测意图；一次输入只填一个槽位（`pending_slot` 当前项），多余内容进 `supplementary_inputs`。(2) **执行确认**——`pending_slot` 为 `confirm:<动作>`：以确认意图判定——明确确认（确认 / 继续 / 好的 / 要）即命中，走 `answer_slot` → `running`（执行侧 resume Workflow）；明确拒绝（不用了 / 取消 / 不要）视为 `cancel`（不是 `answer_unmatched`），走 mermaid 中 `waiting_input --> cancelled: cancel` 边（事件名为 `decline` 时亦同）；其他 / 含糊输入走 `answer_unmatched`（追加补充说明，复述问题一次）。确认项取值集合（v1.2）：仅 `confirm:resume`；新增确认种类须随新动作一并定义，不得即兴扩展。
+
+**无追问超时（v1.2 裁决，ADR-20）：** `waiting_input` 不设超时；追问状态持久化，刷新 / 重开后按 Checkpoint 与会话快照恢复（NFR-09、AC-11）。超时不作为 v1.2 行为；如产品后续要求超时，须另立决策，不得默认引入。
+
+**与 Task 状态机的关系（v1.2 整改 R12-06）：** 本图只管 SkillTask（任务级投影），不改动 §3 Task 状态机（18 边冻结）；SkillTask 的 `cancelled` / `failed` 不自动改变所属 Task 状态，Task 状态由 Task 级事件驱动（§3）。**`waiting_input` 期间 Task 保持 `Running`：** SkillTask 的等待不提升为 Task 的等待——Task 从未离开 Running，因此恢复不走 §3 的 `Waiting→Running` 显式迁移（该规则只适用于 Task 进入 Waiting 的情形，如跟品暂停 BR-12）；Run 超时时钟（§5.1 `timeout_seconds=900`，计 Run 执行时间，不计等待墙钟时间）在等待期间暂停——等待不消耗 turns、不计执行时间；`waiting_input` 不设超时与此一致（ADR-20）。**执行前 ask 分支 SkillTask 可无 Task：** `04` §9.3 `task_id` 必填为否——追问发生在提交 plan 之前时 SkillTask 尚无所属 Task，补参提交时创建 Task。
 
 ## 5. 预算与重试（冻结数值）
 
 ### 5.1 单 Run 默认值（唯一值，impl_04 §6.5）
 
 `max_turns=12`、`timeout_seconds=900`、`max_tool_calls=40`、`max_replans=1`、`max_tool_error_streak=2`。
+
+> **等待时钟（v1.2 整改 R12-06）：** `timeout_seconds=900` 计 Run 执行时间，不计等待墙钟时间；Run 因等待用户输入而暂停时（§4.7 `waiting_input`），超时时钟暂停——等待不消耗 turns、不计执行时间；恢复后时钟继续。本条只适用于 Run 级超时；Task 级 `Waiting --> Failed: deadline exceeded` 边（§3）只适用于 Task 进入 Waiting 的情形（如跟品暂停 BR-12），不适用于 SkillTask 的 `waiting_input`（此时 Task 保持 `Running`，见 §4.7）。
 
 ### 5.2 任务级预算（新增，单 Run 值之上）
 
@@ -426,7 +494,9 @@ Agent Eval 固定集：验收表 A18（内容见 `08_附录_核心契约正文.m
 
 ### 8.3 领域状态映射、重试、部分成功与补偿（源 impl_07 §9.1–§9.4）
 
-**领域状态映射表（6 行）：**
+**领域状态映射表（6 行；适用范围，v1.2 整改 R12-06）：** 本表只适用于跨域 DomainInvocation（主 Workflow 与领域之间的调用）；媒体 SkillTask 的等待不走本表——`waiting_input` 期间 Task 保持 `Running`，不进入 `Waiting(awaiting_user)`，见 §4.7。
+
+| 主 Workflow 状态 | 领域结果 | 行为 |
 
 | 主 Workflow 状态 | 领域结果 | 行为 |
 |---|---|---|
@@ -437,7 +507,7 @@ Agent Eval 固定集：验收表 A18（内容见 `08_附录_核心契约正文.m
 | Failed | `failed`（不可重试） | 停止受影响分支 |
 | Cancelled | `cancelled` | 取消未开始 Step |
 
-**重试（其余规则）：** 同一 Step 的重复调用复用原 `invocation_id`；领域返回不确定状态时，先 `get` 再决定重试；某个领域超时不阻塞与其无依赖关系的并行分支；可重试错误使用指数退避，默认最多 2 次（重试次数见 §5.3）。
+**重试（其余规则）：** 同一 Step 的重复调用复用原 `invocation_id`；领域返回不确定状态时，先 `get` 再决定重试；某个领域超时不阻塞与其无依赖关系的并行分支；可重试错误使用指数退避，默认最多 2 次（重试次数见 §5.3；本口径为跨域调用口径，不适用于媒体执行层，见 §4.5.3）。
 
 **部分成功（其余规则）：** 允许 `partial` 输出，但必须列出缺失领域和受影响产物；`review-package` 必须标记缺口；缺失 Copy、Landing Page 或 Ads Artifact 时不能生成最终 `review-package=ready`；只有未确认的草稿 Artifact 可以标记 `stale`，不执行破坏性回滚。
 
@@ -492,7 +562,7 @@ Agent Eval 固定集：验收表 A18（内容见 `08_附录_核心契约正文.m
 
 ### 9.3 product_id 精确过滤（BR-03）
 
-普通检索包含连续至少五位数字，或明确写了商品 ID / 产品 ID 时，意图层优先判断为精确商品检索，先在内部成片按 ID 相等匹配；演示结果列表仍可混入预置外部视频，无匹配时可展示默认样例；真实同商品纯净结果和零召回待接入（源 PRD §5 BR-03）。Agent 侧：SearchPlan 的 `hard_filters` 须表达 `product_id` 相等匹配。**合稿裁决**：`04` §2.4 的 `filters` 注册字段清单为 v1.0 冻结，v1.1 未补 `product_id`（见 §12）；Mock 阶段按相等匹配语义在意图层实现，不扩展公开 API 字段；注册字段扩展待 ADR/后续版本裁决。
+普通检索包含连续至少五位数字，或明确写了商品 ID / 产品 ID 时，意图层优先判断为精确商品检索，先在内部成片按 ID 相等匹配；演示结果列表仍可混入预置外部视频，无匹配时可展示默认样例；真实同商品纯净结果和零召回待接入（源 PRD §5 BR-03）。Agent 侧：SearchPlan 的 `hard_filters` 须表达 `product_id` 相等匹配。**合稿裁决**：`04` §2.4 的 `filters` 注册字段清单为 v1.0 冻结，不扩展公开 API 字段；Mock 阶段按相等匹配语义在意图层实现。
 
 ### 9.4 上传媒体到 Similar Seed 的链路
 
@@ -571,7 +641,7 @@ Agent Eval 固定集：验收表 A18（内容见 `08_附录_核心契约正文.m
 
 ### 10.10 BR-19 裂变与 BGM
 
-标准任务装入本地成片样例；裂变新增一个版本，沿用参考片媒体及镜头数据，可独立编辑；BGM 可用于全部或指定视频的预览，音频上传上限 30 MB，校验失败保留原选用项，实际混音导出待接入（源 PRD BR-19；真实混音服务待确认 OI-07）。
+标准任务装入本地成片样例；裂变新增一个版本，沿用参考片媒体及镜头数据，可独立编辑；BGM 可用于全部或指定视频的预览，音频上传上限 30 MB，校验失败保留原选用项，实际混音导出待接入（源 PRD BR-19；真实混音服务接入时冻结（OI-07））。
 
 ### 10.11 BR-20 资产包交付
 
@@ -599,14 +669,13 @@ Agent Eval 固定集：验收表 A18（内容见 `08_附录_核心契约正文.m
 
 ## 12. v1.1 待对齐引用与 OI 登记（新增，v1.1）
 
-> 本节所列为本文件新增引用中目标章节在起草时 `04` v1.1 文本中尚不存在的占位引用。合稿时 04 组已写入 §9–§13，前三项已纠正为真实节号（见上表）；后两项（`04` §2.4 / §2.3）因涉及 v1.0 冻结契约未补，仍为未闭合项，见 `work/v1.1-changelog.md` 未闭合清单。
+> 本节所列为本文件新增引用中目标章节在起草时 `04` v1.1 文本中尚不存在的占位引用。合稿时 04 组已写入 §9–§13，前三项已纠正为真实节号（见上表）；最后一项（`04` §2.3）因涉及 v1.0 冻结契约未补，仍为未闭合项，见 `work/v1.1-changelog.md` 未闭合清单。（v1.3 注：`04` §2.4 product_id 登记行已随该待办取消而删除，不再计入未闭合项。）
 
 | 占位引用 | 用途（本文件） | 状态 |
 |---|---|---|
 | `04` §9.4 MediaActionPlan Schema | §4.5 动作枚举与字段本体 | 已落定（合稿纠正，原占位 `04` §4.6 作废） |
 | `04` §9.3 SkillTask / SkillResult Schema | §4.6 六项技能任务与结果本体 | 已落定（合稿纠正，原占位 `04` §4.7 作废） |
 | `04` §9.5 EditDecision / §9.6 DerivedVideo / §9.10 槽位投影 Schema | §9 槽位状态与衍生关系本体 | 已落定（合稿纠正，原占位 `04` §4.8 作废） |
-| `04` §2.4 `filters` 注册字段补 `product_id` | §9.3 精确商品检索 | 未补：`04` §2.4 为 v1.0 冻结清单，v1.1 不扩展公开 API 字段；Mock 按意图层相等匹配实现；注册字段扩展待 ADR/后续版本 |
 | `04` §2.3 Similar Seed 形扩展（上传媒体 Seed 引用） | §9.4 上传媒体到 Similar Seed | 未补：`04` §2.3 只定义已有 Video/Clip 的 Seed 形；上传媒体的临时 ID、入库条件、引用有效期待 04 组后续裁决；Mock 只接受已有 `video_id` / `clip_id` 的 Seed |
 
 **OI 登记（本文件涉及项，均保留原型行为 + 待决策问题 + Mock 方案 + 验收占位，未标排除）：**

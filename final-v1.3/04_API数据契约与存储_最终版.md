@@ -1,6 +1,7 @@
 # 04 API、数据契约与存储（最终版 v1.0）
 
 > **v1.1 修订注记（2026-11-16）：** 依据覆盖分析《VideoDomainAgent_与PRD原型覆盖分析.md》+ PRD v1.6；改动摘要：新增 §9–§13，补齐覆盖分析 §10.2 的 10 个新对象、六项技能 Schema、MediaActionPlan 与 Media Capability Workflow API、槽位与跟品契约、反馈扩展及 REQ-E01/E07 契约落点；§1–§8 冻结内容（CandidateSet Schema、状态机 18 条边、预算、5 个检索类 POST、14 类错误）一字未改。
+> **v1.2 修订注记（2026-11-16）：** §9.3 新增 `active` / `pending_slot` / `supplementary_inputs` 字段与 `input_media_ref.source`、`result.partial` / `missing_items`；§9.4 计划 `status` 改为聚合规则；新增 §10.1 媒体 Adapter 接口契约；§13.2 对照表补 §11 行；§13.3 第 6、10 项更新（OI-07 拆分，v1.3 已移除、ADR-19–21 立项）。§1–§8 冻结内容一字未改。
 
 > **字段级权威（唯一）。** 其它文档与本文件冲突时，以本文件为准。
 > 来源：impl_01 + impl_05 + 05（存储部分），合并后冻结为 Schema v1.0。
@@ -478,6 +479,8 @@ Task 应记录字段（指针）：`owner`、`tenant`、`domain`、`parent_task`
 
 错误体示例（impl_01 §9 原文）：`{request_id, trace_id, code, category, message, retryable, details}`。
 
+> **同名不同义（v1.2 复核 N1-04）：** 本节 `category` 是 14 类错误分类（`validation` / `authentication` / …），`retryable` 是其一列；§9.3/§9.4/§10.1 的 `error.category` 是二值 `retryable` / `non_retryable`（只决定是否可重试），两者同名不同义，不得混用——任务/动作级 error 对象中的 `category` 一律指二值，不指本节 14 类。
+
 | category | HTTP | retryable | 说明 |
 |---|---|---|---|
 | `validation` | 400 | 否 | 参数校验失败；Tool Schema 非法返回 `TOOL_SCHEMA_INVALID`（源 impl_06 §6.3），Agent 最多修正一次 |
@@ -635,6 +638,8 @@ domains:
 
 来源：PRD §5 六项技能表、BR-01；PRD §8、§12（任务恢复）；PRD §17.2 DR-17、§17.3 NFR-04；覆盖分析 §2.3、§10.2。六项技能共用同一任务/结果信封 + 各技能独立的 `task_params` / `result` 结构；简单技能可走确定性模板，不必启动 Agent（覆盖分析 §7.2）。
 
+> **v1.2（2026-11-16）：** 状态说明由注记升级为投影表（`03` §4.5.3）+ 契约测试（`08` §11）；新增 `active` / `pending_slot` / `supplementary_inputs` 字段（追问状态机，`03` §4.7）；`input_media_ref` 新增 `source`（演示视频来源标记）；`result` 新增 `partial` / `missing_items`（部分完成）。
+
 **SkillTask 通用字段：**
 
 | 字段 | 类型 | 必填 | 约束 | 来源 |
@@ -642,12 +647,15 @@ domains:
 | `skill_task_id` | string | 是 | 唯一 ID | PRD §5 |
 | `skill_type` | string | 是 | 枚举：`subtitle_extract`（提取字幕）/`voiceover`（配口播）/`erase_element`（擦除元素）/`aspect_ratio`（调整画幅）/`clip_generate`（片段生成）/`selling_overlay`（卖点浮层） | PRD §5 |
 | `tenant_id` / `session_id` / `task_id` | string | 是/是/否 | 租户/会话必填；绑定 Task 后填 `task_id` | §1；PRD §12 |
-| `input_media_ref` | object | 条件必填 | `{video_id, clip_id?}`；需视频的技能无指定素材时采用演示视频（PRD §5） | PRD §5 |
+| `input_media_ref` | object | 条件必填 | `{video_id, clip_id?, source}`；**条件（R12-25）：** 需视频的四项技能（`subtitle_extract` / `erase_element` / `aspect_ratio` / `selling_overlay`）必填；`voiceover` / `clip_generate` 不需要输入视频，不必填。`source` 枚举 `user` / `demo`（v1.2 新增，`input_media_ref` 存在时必填，不得默认 `user`）：需视频的技能无指定素材时采用演示视频，此时 `source=demo` 必须显式标记；演示视频为具名版本化资产，资产 ID 不再登记（v1.3 已取消 V12-03 待确认项）；`source=demo` 的产物不得进入个人资产（§9.8）、回流与分享（§12.2） | PRD §5 |
 | `task_params` | object | 是 | 各技能参数，见下表 | PRD §5；BR-01 |
-| `status` | string | 是 | 枚举：`submitted` / `running` / `waiting_input`（追问等待）/ `succeeded` / `failed` / `cancelled`；**为 Media Capability Workflow 编排状态的任务级表达（对应关系见 `03` §4.5.3 注记）；非 Task 状态机（`03` §3，9 态）的投影**；`waiting_input` 对应执行侧 NeedsUserAction；慢任务可查询状态 | PRD §8；DR-17；NFR-04 |
-| `retry_count` | integer | 是 | 已重试次数，初始 0 | PRD §13；OI-07 |
-| `max_retries` | integer | 否 | **待确认**（OI-07 真实服务失败重试契约未定；不得编造数值） | OI-07 |
-| `error` | object | 否 | 失败时必填：`{code, message, raw_error?}`；原始异常须记录（BR-13 同款口径） | PRD §13；BR-13 |
+| `status` | string | 是 | 枚举：`submitted` / `running` / `waiting_input`（追问等待）/ `succeeded` / `failed` / `cancelled`；**Workflow 执行状态的任务级投影（唯一事实源与投影表见 `03` §4.5.3；契约测试见 `08` §11）；只由状态投影器写，Agent 与 Workflow 不直接写本字段**（例外：创建时 `submitted`、用户取消时 `cancelled`，均经投影器落盘）；`waiting_input` 对应两类等待（R12-13）：执行前追问（`ask`，尚未提交 plan）与执行侧 NeedsUserAction；慢任务可查询状态；**非 Task 状态机（`03` §3，9 态）的投影** | PRD §8；DR-17；NFR-04 |
+| `active` | boolean | 是 | 会话内同一时间仅一个 SkillTask 为 `true`（v1.2 新增，`03` §4.7）：切走时置 `false`——冻结的是**交互态**（不再向该任务路由新输入、不再追问），**执行态仍由投影推进**（Running 中的任务完成时 `status` 可经投影变为 `succeeded` / `failed`，结果回写后不抢焦点）；切回时置 `true`，状态不变继续；取消时置 `false`（`03` §4.7）；切换是原子操作 | BR-01；`03` §4.7 |
+| `pending_slot` | string \| null | 否 | 当前追问的待决项（v1.2 新增，`03` §4.7）：槽位名，或 `confirm:<动作>` 形式的执行确认项（如 `confirm:resume`）；不在追问中为 `null`；多槽位缺失时一次只记一个，按提问顺序逐个追问 | BR-01；`03` §4.7 |
+| `supplementary_inputs` | array | 否 | 追问中未命中待填槽位的输入，以及命中输入中超出当前槽位的多余内容（v1.2 新增，`03` §4.7 回答判定）：append-only，元素 `{text, at}`；不清除 `pending_slot`，不改变状态；受会话快照 30 条上限约束（PRD §12，见 `07` §7 V12-08） | BR-01；`03` §4.7 |
+| `retry_count` | integer | 是 | 已重试次数，初始 0；仅 `error.category=retryable` 时显示重试入口并允许重试（`03` §4.7） | PRD §13；OI-07 |
+| `max_retries` | integer | 否 | 配置值，接入时冻结（不得编造数值）；重试策略形状（指数退避 + 配置项次数）见 §10.1 | OI-07 |
+| `error` | object | 否 | 失败时必填：`{code, category, message, raw_error?}`；`category` 枚举 `retryable` / `non_retryable`（v1.2 整改 R12-08，与 `04` §10.1 Adapter 返回一致）；原始异常须记录（BR-13 同款口径） | PRD §13；BR-13 |
 | `created_at` / `updated_at` | string | 是 | RFC 3339 | §1 |
 
 **各技能 `task_params` / `result`（`result` 挂在 SkillResult 对象上，`skill_task_id` 外键）：**
@@ -661,7 +669,11 @@ domains:
 | 片段生成 `clip_generate` | `shot_description`（是，需要镜头描述）、`aspect_ratio`（否，默认 `9:16`）、`duration_seconds`（否，默认 `8`，**限制 3–15 秒**，超限拒绝） | `{video_ref: string, duration_seconds: integer, aspect_ratio: string}`——返回视频样例 | PRD §5 |
 | 卖点浮层 `selling_overlay` | `video_ref`（是）、`selling_copy`（是，引号中的卖点文案；缺时追问） | `{video_ref: string}`——返回带浮层示例视频 | PRD §5；BR-01 |
 
-追问规则（BR-01）：技能追问未回答时，后续输入补到该任务；切换技能保留正文与附件，当前技能状态只保留一项。结果呈现（PRD §5）：视频结果完成后保持对话，点击才在右侧打开对应视频，历史结果仍能各自打开；无分段的技能结果保持单视频视图（PRD §8）。
+追问规则（BR-01）：技能追问未回答时，后续输入补到该任务；切换技能保留正文与附件，当前技能状态只保留一项。追问状态机全文见 `03` §4.7（v1.2 新增，含回答判定、切换、取消、重试与无超时规则）。
+
+**部分完成（v1.2 新增）：** Workflow 终态为 Partial 时 SkillTask 为 `succeeded`，`result.partial=true`，`result.missing_items`（字符串数组）列出缺失项；结果卡须显式标注“部分完成”；`error` 留空（partial 不是失败）。`result` 各技能结构同上表，另加 `partial: boolean`（默认 `false`）、`missing_items: string[]`（`partial=true` 时必填）两个通用字段。
+
+结果呈现（PRD §5）：视频结果完成后保持对话，点击才在右侧打开对应视频，历史结果仍能各自打开；无分段的技能结果保持单视频视图（PRD §8）。状态投影表见 `03` §4.5.3；契约测试见 `08` §11。
 
 ### 9.4 MediaActionPlan（声明式媒体动作计划）
 
@@ -672,7 +684,7 @@ domains:
 | `plan_id` | string | 是 | 唯一 ID | 覆盖分析 §10.1 |
 | `task_id` / `entry_task_id` | string | 是/否 | 所属 Task；入口任务可溯源 | `03` §2 |
 | `actions` | object[] | 是 | 动作列表，见下表；按 `order` 执行 | 覆盖分析 §7.2 |
-| `status` | string | 是 | 枚举：`pending` / `running` / `partial` / `succeeded` / `failed` / `cancelled`；分项失败时整计划为 `partial`，其余动作继续（BR-13 同款口径）；计划级聚合状态，与 Workflow 执行状态（`03` §4.5.3 图）的对应关系见该节注记 | BR-13 |
+| `status` | string | 是 | 枚举：`pending` / `running` / `partial` / `succeeded` / `failed` / `cancelled`；**计划级聚合状态，只由聚合器写（v1.2 新增，聚合规则见 `03` §4.5.3 状态投影表；契约测试见 `08` §11）**。聚合产生式（v1.2 整改 R12-12；复核 N2-02 补全，优先级自上而下，穷举全部动作状态组合）：(1) 任一动作 `running` → `running`；Workflow 处于 NeedsUserAction 期间保持 `running`（计划未终结）。(2) 全部动作 `pending` → `pending`（计划已提交未开始）。(3) 任一动作 `pending`（其余动作已终结，无 `running`）→ `running`（执行中混合态：有动作已终结、有动作待执行）。(4) 全部动作 `succeeded` → `succeeded`。(5) 全部动作 `cancelled` → `cancelled`。(6) ≥1 动作 `succeeded` 且 ≥1 动作 `failed` / `skipped` / `cancelled` → `partial`（BR-13 同款口径：失败动作的后续步骤跳过，未开始且无依赖的动作可继续；`missing_items` 列出失败、跳过与取消项）。(7) 0 动作 `succeeded` 且 ≥1 动作 `failed`、其余动作已终结 → `failed`（零产出：计划未交付任何可用结果）。(8) 不可达组合：全 `skipped` 或 `skipped` + `cancelled`（无 `failed`）——`skipped` 须有失败依赖，依赖本身为 `failed`，故不可达；如实现中出现，聚合器须报错而非静默归类。 | BR-13 |
 | `progress` | object | 否 | `{completed_actions, total_actions}` | NFR-04 |
 | `cancel_reason` | string | 否 | 取消原因 | `03` §3 |
 
@@ -686,8 +698,8 @@ domains:
 | `order` | integer | 是 | 执行顺序（从 0 起） | 覆盖分析 §7.2 |
 | `depends_on` | string[] | 否 | 依赖的 `action_id` 清单；依赖未成功不得执行 | 覆盖分析 §7.2 |
 | `status` | string | 是 | 枚举：`pending` / `running` / `succeeded` / `failed` / `skipped` / `cancelled` | NFR-04 |
-| `retry_count` / `max_retries` | integer | 是/否 | 已重试次数；上限待确认（OI-07） | OI-07 |
-| `error` | object | 否 | `{code, message, raw_error?}` | BR-13 |
+| `retry_count` / `max_retries` | integer | 是/否 | 已重试次数；上限为配置值，接入时冻结 | OI-07 |
+| `error` | object | 否 | `{code, category, message, raw_error?}`；`category` 枚举 `retryable` / `non_retryable`（v1.2 整改 R12-08，与 `04` §10.1 Adapter 返回一致） | BR-13 |
 | `idempotency_key` | string | 是 | 写操作幂等键（`03` §5.4 三层键口径） | `03` §5.4 |
 | `result_ref` | object | 否 | 执行结果引用（`video_id` / `clip_id` / `asset_id` / 文件引用） | PRD §8 |
 
@@ -772,8 +784,9 @@ domains:
 | `visibility` | string | 是 | 枚举：`owner_only` / `shared`；回流后为 `public`（见下） | NFR-10 |
 | `reflow_status` | string | 是 | 枚举：`protected` / `reflowed` / `pending`；15 天保护期后回流公共库 | PRD §16；G4 |
 | `source_product_id` | string | 否 | 产出绑定目标商品 ID；生产绑定待确认（OI-11） | REQ-E06；OI-11 |
+| `source` | string | 是 | 入库来源标记（v1.2 整改 R12-09）：枚举 `user` / `demo`，取自 `input_media_ref.source`（`04` §9.3）；`source=demo` 的产物**不得入库**——入库校验在持久化前执行，`demo` 请求被拒绝且不产生 PersonalAsset 记录（拒绝记入审计日志，不在 PersonalAsset 表中）；因此 PersonalAsset 表中 `source` 恒为 `user`，枚举保留 `demo` 仅用于拒绝审计记录的来源标注（复核 N1-05） | `04` §9.3；`07` V12-03 |
 
-回流后加工待确认（OI-05：回流后的槽位与提示词补加工待确认）；共享交接待确认（OI-05）。
+回流后加工待确认（OI-05：回流后的槽位与提示词补加工待确认）；共享交接待确认（OI-05）。**回流仅处理 `source=user` 的资产**（v1.2 整改 R12-09）：`source=demo` 的产物不进入回流（`reflow_status` 恒为 `protected`，不参与 15 天回流）。
 
 ### 9.9 UserPreference / UserMemory（偏好与记忆）
 
@@ -830,7 +843,24 @@ domains:
 | 取消 | `POST /v1/media-actions/{plan_id}/cancel` | 取消未完成动作；已完成动作保留 | 覆盖分析 §7.2 |
 | 重试 | `POST /v1/media-actions/{plan_id}/retry` | 重试失败动作；只清理选中分项的失败标记，成功步骤保留（BR-13 同款口径） | BR-13 |
 
-提交请求字段：`plan_id`（是）、`task_id`（是）、`entry_task_id`（否）、`actions`（是，§9.4 结构）、`Idempotency-Key` 请求头（是，写操作必填，`03` §5.4）。响应：`202 Accepted` + `{plan_id, status, progress}`；查询返回完整计划（含各动作 `status` / `retry_count` / `error` / `result_ref`）。错误映射沿用 §6 的 14 类；耗时任务异步执行（NFR-04），生成中可继续浏览、结果可找回（PRD §1 G3）；刷新后仍能从资产和会话打开（NFR-09，恢复见 §11.9）。Mock：真实媒体服务（调画幅、合成、口播、图像修改）及失败重试契约待确认（OI-07），Mock 方案为计时器模拟 + 固定样例结果，须在资源 API 立项时冻结，v1.1 不编造 Mock 触发词。
+提交请求字段：`plan_id`（是）、`task_id`（是）、`entry_task_id`（否）、`actions`（是，§9.4 结构）、`Idempotency-Key` 请求头（是，写操作必填，`03` §5.4）。响应：`202 Accepted` + `{plan_id, status, progress}`；查询返回完整计划（含各动作 `status` / `retry_count` / `error` / `result_ref`）。错误映射沿用 §6 的 14 类；耗时任务异步执行（NFR-04），生成中可继续浏览、结果可找回（PRD §1 G3）；刷新后仍能从资产和会话打开（NFR-09，恢复见 §11.9）。Mock：真实媒体服务（调画幅、合成、口播、图像修改）及失败重试契约接入时冻结（不再逐项跟踪，v1.3），Mock 方案为计时器模拟 + 固定样例结果，须在资源 API 立项时冻结，v1.1 不编造 Mock 触发词。
+
+### 10.1 媒体 Adapter 接口契约（v1.2 新增）
+
+> 依据：覆盖分析 §7.2/§10.1；PRD §5、§13、OI-07。本节只定接口形状与错误分类口径，不定服务选型与任何数值；`max_retries`、超时、配额为配置值，接入时冻结，不得编造。Mock 与真实服务共用同一接口（ADR-04 同款口径：Mock 与真实 Adapter 共用 Port / 错误码）。
+
+- **接口（单个动作一次调用）：** `invoke(action, params, idempotency_key, deadline)` → 成功返回 `{artifact_ref}`；失败返回 `{error: {code, category, message, raw_error}}`。`action` 枚举 10 项（§9.4）；`params` 按 §9.3/§9.4 各动作参数；`idempotency_key` 复用 `03` §5.4 公式；`deadline` 由调用方传入，超时为部署配置项，非冻结常量。
+- **错误分类（冻结分类，不冻结具体 code 值）：** `retryable`（可重试：超时、429、5xx、瞬时网络）与 `non_retryable`（不可重试：参数校验 4xx、策略拦截、配额耗尽、不支持的动作）。每个 Adapter 实现须在接入时声明其 code → category 映射表并冻结（该映射表为各 Adapter 接入时冻结的附表，不在本文件内——`05` §6.2 AC-03R 所称“映射表”即指此附表）；未声明的 code 默认 `non_retryable`（就高不就低：宁可少重试，不可无限重试）。
+- **重试策略形状（冻结形状，不冻结次数）：** 指数退避（首 500ms → 1000ms，形状与 `03` §5.3 相同，次数不同——§5.3 的 2 次是跨域调用口径，不适用于媒体层）；次数为配置项 `max_retries`（接入时冻结）；重试复用原 `invocation_id`，不产生重复 Artifact；重试只清理选中分项的失败标记，成功步骤与人工编辑保留（BR-13 同款口径）；`retryable` 耗尽次数后转 `failed`，`non_retryable` 直接转 `failed` 不重试。
+- **按动作逐项迁移（ADR-21）：** 10 个动作各自独立切换 Mock / 真实服务（feature flag 按动作，不搞一次性大切换）；切换不改 MediaActionPlan Schema；切换门禁见下表——有对应技能的动作须通过该技能的 AC-03R 验收，无对应技能的动作按其主验收（`05` §6.2）；切换后 Mock 结果不得再返回。
+
+| 动作 | 切换门禁（验收） | 决策归属 |
+|---|---|---|
+| `subtitle` / `voiceover` / `erase_object` / `change_aspect_ratio` / `generate_clip` / `overlay_selling_point` | 该技能的 AC-03R（`05` §6.2） | 接入时冻结（按技能） |
+| `compose_timeline` / `bgm` | AC-17（合成前校验，`05` §6.2） | 接入时冻结 |
+| `export_asset` | AC-13（ZIP 失败降级，`05` §6.2） | 接入时冻结 |
+| `upload` | §11.7 上传契约（30 MB 上限、校验失败保留原选用项）+ AC-13 异常证据（上传失败记录与重试） | 接入时冻结 |
+- **演示视频不走 Adapter：** `input_media_ref.source=demo` 的输入不调用真实服务，演示视频资产由平台直接提供（§9.3、V12-03）。
 
 ## 11. 槽位与跟品契约（v1.1 新增）
 
@@ -909,7 +939,7 @@ domains:
 | 对象/字段 | 约定 | 来源 |
 |---|---|---|
 | 收藏（Favorite） | `{favorite_id, user_id, entity_type: video\|clip, entity_id, created_at}`；库卡和视频收藏在本机，可在收藏页或收藏车查看 | PRD §10 |
-| 分享链接（ShareLink） | `{share_id, session_id, created_at, expires_at?, access: read_only}`；分享弹窗可复制带会话 ID 的链接，当前只打开已有本地快照 | PRD §10 |
+| 分享链接（ShareLink） | `{share_id, session_id, created_at, expires_at?, access: read_only}`；分享弹窗可复制带会话 ID 的链接，当前只打开已有本地快照；**`source=demo` 的产物不生成分享链接**（v1.2 整改 R12-09） | PRD §10 |
 | 待确认 | 跨账号、跨浏览器可访问性和只读授权待确认；有效期待确认 | OI-08 |
 
 ## 13. REQ-E01 / REQ-E07 契约落点与 04↔08 对照（v1.1 新增）
@@ -928,6 +958,8 @@ domains:
 | §9.1 | A-9 | EntryTask |
 | §9.2 | A-10 | RecommendedScenario |
 | §9.3 | A-12 | SkillTask / SkillResult（六项技能） |
+| §9.3 / §9.4 | §11（v1.2 新增） | 状态投影与追问状态机契约测试（T-SM、T-CM） |
+| §10.1 | §11.4（v1.2 整改 R12-16 新增） | Adapter 契约测试（T-AD-01–03：错误分类与按动作迁移） |
 | §9.4 | A-11 | MediaActionPlan |
 | §9.5 | A-13 | EditDecision |
 | §9.6 | A-14 | DerivedVideo |
@@ -951,9 +983,9 @@ domains:
 3. **OI-03（外部视频二创与深度理解）：** 原型行为：外部视频默认无槽位（DR-10），实时理解、自动切片与深度二创为待确认的生产能力（PRD §9）；待决策：是否允许二创、何时触发深度理解和缓存；Adapter 边界：外部视频以 Video 形态承载，`source_type` 区分来源（§4.1）。
 4. **OI-04（动作矩阵与下载口径）：** 原型行为：独立片段/整片/切片/衍生结果的动作随卡片入口变化（PRD §7、§9）；待决策：生产动作矩阵及下载口径；验收占位 AC-13。
 5. **OI-05（资产保护期与回流）：** 原型行为见 §9.8；待决策：回流后加工、共享交接；Mock：资产状态四值（DR-16）固定样例；验收占位 G4。
-6. **OI-07（真实媒体服务契约）：** 原型行为：技能交付见 §9.3；待决策：调画幅、合成、口播、图像修改等真实服务及失败重试契约（含 `max_retries` 数值）；Mock：计时器模拟 + 固定样例；验收占位 AC-03。
+6. **OI-07（真实媒体服务契约，v1.2 曾拆分，v1.3 已移除该拆分）：** 原型行为：技能交付见 §9.3；真实服务及失败重试契约（含 `max_retries` 数值）接入时冻结，不再逐项跟踪；Mock：计时器模拟 + 固定样例；Adapter 边界：§10.1 媒体 Adapter 接口契约（错误分类、重试形状、按动作逐项迁移与门禁表）；验收占位 AC-03（Mock）+ AC-03R（真实服务，`05` §6.2）。
 7. **OI-08（收藏/分享权限）：** 见 §12.2。
 8. **OI-09（会话保留期与跨端恢复）：** 原型行为见 §11.9；待决策：保留期（旧版 7 天为暂拟值）、跨端恢复、资源续存。
 9. **OI-11（商品绑定与旧广告草稿入口）：** 跟品演示 ID 见 BR-11（§11.4）；待决策：未匹配商品生产校验、跨线路商品 ID 绑定、旧广告草稿与预算能力的交付入口；跟品主路径停在下载资产包，不默认走 Ads 草稿/发布（覆盖分析 §7.4）。
-10. **新对象冻结程序：** §9–§12 的对象、枚举与 §10 端点均为 v1.1 新增未冻结；字段名、枚举值、提议新增表须经 ADR 立项冻结；Ticket 总数 44（`05` §5）与 ADR-01–ADR-18 单套编号不动——新增工作不新增 ADR 编号，挂在既有 ADR 下或走新 ADR 评审由 05/07 组裁决。
+10. **新对象冻结程序：** §9–§12 的对象、枚举与 §10 端点均为 v1.1 新增未冻结；字段名、枚举值、提议新增表须经 ADR 立项冻结；Ticket 总数 44（`05` §5）不动。新增 ADR 的规则（v1.2 整改 R12-19）：新增工作**默认不新增 ADR 编号**，挂在既有 ADR 下；确需新增时走新 ADR 评审（05/07 组裁决），编号顺延。**v1.2 执行：** 本条程序已执行——ADR-19–21 经 v1.2 评审立项（`01` §8、`07` §7 V12-06）。
 11. **新对象 Mock Fixture（场景 Fixture，评审 C-6 新增登记）：** `04` §9 引言已明示新对象暂无 Mock Fixture（§7 的 4 Video / 9 Clip 不变）；待决策：RecommendedScenario 等新对象的 Fixture 数据集与版本管理；Mock：场景取固定样例预置；验收占位 AC-04/AC-10。
